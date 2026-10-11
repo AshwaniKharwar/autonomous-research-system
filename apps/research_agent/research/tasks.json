@@ -1,0 +1,176 @@
+[
+  {
+    "id": "task-01",
+    "title": "Solid-State vs. Lithium-Ion Architectural and Chemical Fundamentals",
+    "angle": "Angle 1: Architecture, Chemistry, and Working Principles",
+    "type": "research",
+    "context": "This research investigates how solid-state batteries differ from conventional lithium-ion batteries and which companies are closest to mass production, to give investors and industry analysts a decision-ready overview that separates commercial reality from marketing hype. This task focuses on the foundational physical and chemical architecture differentiating solid-state batteries from liquid-electrolyte lithium-ion systems. Conventional batteries rely on liquid organic electrolytes and polymer separators with graphite or silicon anodes, whereas solid-state designs substitute a solid electrolyte (sulfide, oxide, or polymer) enabling pure lithium-metal or anode-free configurations.",
+    "questions": [
+      "What are the structural, chemical, and physical differences between conventional liquid-electrolyte Li-ion cells and solid-state battery cells?",
+      "What are the key material properties, ionic conductivities, mechanical behaviors, and performance trade-offs among the three primary solid electrolyte families (sulfides, oxides, and polymers)?",
+      "How do anode architectures evolve from conventional graphite and silicon-graphite intercalation to pure lithium-metal foil and anode-free (in-situ plated) designs?",
+      "What ionic transport mechanisms and chemo-mechanical interfacial resistance issues occur at the solid electrolyte-electrode boundaries during repeated charge-discharge cycles?"
+    ],
+    "scope": "Time window: Jan 2023-Feb 2025, referencing earlier Li-ion baselines only for context. Geography: global. Focus: automotive-grade cell architecture and electrolyte/anode chemistry. Exclude: non-automotive micro-batteries and non-lithium chemistries except as brief comparisons.",
+    "preferred_sources": [
+      "Peer-reviewed materials and energy journals (Nature Energy, Advanced Energy Materials, Journal of Power Sources)",
+      "Battery consortia white papers and electrochemical society publications",
+      "Academic and national laboratory technical reviews (e.g., US DOE, Fraunhofer ISI)"
+    ],
+    "search_budget": 12,
+    "min_sources": 6,
+    "depends_on": [],
+    "output_file": "/research/findings/task-01.md",
+    "feeds_report_section": "Technical Architecture: Solid-State vs. Conventional Lithium-Ion"
+  },
+  {
+    "id": "task-02",
+    "title": "Comparative Performance, Safety, and Operational Parameter Benchmarks",
+    "angle": "Angle 2: Performance, Safety, and Operational Metrics",
+    "type": "research",
+    "context": "This research investigates how solid-state batteries differ from conventional lithium-ion batteries and which companies are closest to mass production, to give investors and industry analysts a decision-ready overview that separates commercial reality from marketing hype. This task benchmarks demonstrated and targeted performance, safety metrics, and operating constraints of solid-state batteries against state-of-the-art liquid lithium-ion cells (such as high-nickel NMC811 and LFP). Practical solid-state implementation faces severe constraints such as external stack pressure to maintain interfacial contact and compromised low-temperature performance.",
+    "questions": [
+      "What are the demonstrated and targeted gravimetric (Wh/kg) and volumetric (Wh/L) energy densities of automotive solid-state cells compared to state-of-the-art premium liquid Li-ion (e.g., high-nickel NMC811) and LFP cells?",
+      "What are the charging rate capabilities (C-rates, 10-80% fast-charge times) and cycle life durability (retention at 800+ cycles) of solid-state cells under standardized conditions?",
+      "What is the validated safety performance delta regarding thermal runaway thresholds, nail penetration, catastrophic short-circuit flammability, and lithium dendrite penetration compared to liquid Li-ion?",
+      "What external stack pressure requirements (in MPa or atmospheres) and operating temperature ranges are required for solid-state cells to prevent interfacial delamination, and what engineering penalties do these impose on EV battery pack design?"
+    ],
+    "scope": "Time window: Jan 2023-Feb 2025. Geography: global. Focus: automotive-grade cell performance, independent safety test outcomes, and operating constraints (stack pressure, temperature). Exclude: micro-batteries and non-lithium chemistries except as brief comparisons.",
+    "preferred_sources": [
+      "US Department of Energy (DOE/EERE) and national laboratory (Argonne, Oak Ridge) reports",
+      "Independent battery test laboratory evaluations and safety certification standards (UL, SAE)",
+      "Peer-reviewed battery performance and thermal runaway testing studies",
+      "Manufacturer technical datasheets and verified third-party audit disclosures"
+    ],
+    "search_budget": 14,
+    "min_sources": 6,
+    "depends_on": [],
+    "output_file": "/research/findings/task-02.md",
+    "feeds_report_section": "Comparative Performance and Safety Matrix"
+  },
+  {
+    "id": "task-03",
+    "title": "Manufacturing Scalability, Gigafactory Compatibility, and Cost Hurdles",
+    "angle": "Angle 3: Manufacturing, Scalability, and Economic Hurdles",
+    "type": "research",
+    "context": "This research investigates how solid-state batteries differ from conventional lithium-ion batteries and which companies are closest to mass production, to give investors and industry analysts a decision-ready overview that separates commercial reality from marketing hype. This task identifies the engineering, capex, and operational bottlenecks preventing solid-state batteries from moving from pilot lines to GWh-scale production, including brittle ceramic separators, moisture-sensitive sulfides that release H2S, and uniform-pressure stack assembly. It also weighs retrofit of existing gigafactory roll-to-roll lines against greenfield capex and cost parity against declining Li-ion.",
+    "questions": [
+      "What are the primary technical bottlenecks in scaling solid-state cell production (e.g., ceramic separator brittleness, sulfide moisture reactivity and toxic H2S release, dry-room environmental control, uniform high-pressure cell stacking)?",
+      "How much of existing gigafactory roll-to-roll production infrastructure (slurry mixing, coating, calendering, cell assembly) can be retrofitted for solid-state batteries versus requiring dedicated greenfield capital equipment?",
+      "What are the projected manufacturing and pack-level cost trajectories ($/kWh) for solid-state batteries from 2025 to 2035 compared to declining liquid NMC and LFP cost baselines?",
+      "What are the current pilot-line yield rates, primary manufacturing failure modes, and defect rates preventing solid-state lines from achieving high-speed commercial throughput?"
+    ],
+    "scope": "Time window: Jan 2023-Feb 2025 with cost projections to 2035. Geography: global, with attention to East Asia, North America, and Europe manufacturing hubs. Focus: pilot-to-GWh manufacturing, capex, and cost trajectories. Exclude: micro-batteries and non-lithium chemistries except as brief comparisons.",
+    "preferred_sources": [
+      "Industrial manufacturing analyst reports (BloombergNEF, Roland Berger, McKinsey Energy Insights)",
+      "Automotive engineering and manufacturing publications (SAE International, Battery Technology)",
+      "Battery manufacturing patent disclosures and equipment maker filings",
+      "Supply chain analyses on dry-room operating costs and precursor materials"
+    ],
+    "search_budget": 14,
+    "min_sources": 6,
+    "depends_on": [],
+    "output_file": "/research/findings/task-03.md",
+    "feeds_report_section": "The Manufacturing Bottleneck: From Lab to Gigafactory"
+  },
+  {
+    "id": "task-04",
+    "title": "Pure-Play Solid-State Battery Startups and OEM Partnerships",
+    "angle": "Angle 4: Pure-Play Solid-State Specialists and Startups",
+    "type": "research",
+    "context": "This research investigates how solid-state batteries differ from conventional lithium-ion batteries and which companies are closest to mass production, to give investors and industry analysts a decision-ready overview that separates commercial reality from marketing hype. This task evaluates the leading pure-play solid-state startups-QuantumScape, Solid Power, Factorial Energy, ProLogium, and SES AI-and their automotive OEM partnerships. These players are advancing different chemical pathways and are navigating the transition from A-sample proof-of-concept to B-sample automotive integration and pilot production.",
+    "questions": [
+      "What proprietary electrolyte chemistries, cell architectures, and form factors are used by pure-play solid-state startups, specifically QuantumScape, Solid Power, Factorial Energy, ProLogium, and SES AI?",
+      "What specific automotive OEM partnerships, joint development agreements, and equity investments back each startup (e.g., Volkswagen/PowerCo with QuantumScape, BMW and Ford with Solid Power, Mercedes-Benz and Stellantis with Factorial)?",
+      "What are the verified developmental sampling stages (A-sample, B-sample, C-sample) and pilot facility production capacities of these startups based on SEC filings and third-party validation tests?",
+      "What are the stated commercialization timelines and target mass-production delivery years disclosed by each startup as of late 2024 / early 2025, and have these timelines slipped from earlier guidance?"
+    ],
+    "scope": "Time window: Jan 2023-Feb 2025. Geography: global (US-listed startups plus Asian players). Focus: pure-play solid-state startups, their chemistries, OEM partnerships, and production milestones. Exclude: incumbent cell makers (covered by task-05) and micro-batteries.",
+    "preferred_sources": [
+      "SEC regulatory filings (Forms 10-K, 10-Q, 8-K) for publicly traded startups",
+      "OEM joint-venture announcements and corporate press releases",
+      "Third-party automotive testing disclosures (e.g., PowerCo endurance test results)",
+      "Investor presentation materials and technical roadmap updates"
+    ],
+    "search_budget": 16,
+    "min_sources": 7,
+    "depends_on": [],
+    "output_file": "/research/findings/task-04.md",
+    "feeds_report_section": "Competitive Landscape: Who Is Closest to Mass Production?"
+  },
+  {
+    "id": "task-05",
+    "title": "Incumbent Battery Giants and Automotive OEM In-House Solid-State Programs",
+    "angle": "Angle 5: Incumbent Battery Manufacturers and Automotive OEM In-House Programs",
+    "type": "research",
+    "context": "This research investigates how solid-state batteries differ from conventional lithium-ion batteries and which companies are closest to mass production, to give investors and industry analysts a decision-ready overview that separates commercial reality from marketing hype. This task analyzes the internal solid-state roadmaps, pilot lines, and industrial deployment plans of incumbent cell leaders (Samsung SDI, CATL, LG Energy Solution, Panasonic, BYD) and major automakers (Toyota, Nissan, Honda). These players have deep manufacturing capital and IP, largely on sulfide-based all-solid-state chemistry, and are balancing advanced liquid/semi-solid products against all-solid-state investment.",
+    "questions": [
+      "What are the proprietary solid-state battery roadmaps, patent holdings, and pilot facility investments of automotive OEMs with in-house programs, specifically Toyota (with Idemitsu Kosan), Nissan, and Honda?",
+      "What are the cell chemistries, pilot line deployments, and multi-GWh mass production roadmaps of global battery cell leaders, including Samsung SDI, CATL, LG Energy Solution, Panasonic, and BYD?",
+      "How are incumbent battery manufacturers strategically balancing commercial production of advanced liquid/semi-solid chemistries against capital allocation for all-solid-state lines?",
+      "What are the confirmed target years and location plans for the first commercial automotive-scale (GWh-level) solid-state battery manufacturing facilities announced by these incumbents?"
+    ],
+    "scope": "Time window: Jan 2023-Feb 2025. Geography: global, especially Japan, South Korea, and China. Focus: incumbent cell makers and OEM in-house programs, pilot lines, and GWh timelines. Exclude: pure-play startups (covered by task-04) and micro-batteries.",
+    "preferred_sources": [
+      "Corporate investor relations disclosures and official corporate roadmaps",
+      "Automaker earnings calls and technical presentation transcripts (Toyota, Samsung SDI, CATL, Nissan)",
+      "Automotive and battery trade publications (Nikkei Asia, Automotive News, Electrive, The Elec)",
+      "Patent landscape analyses from intellectual property and battery research firms"
+    ],
+    "search_budget": 16,
+    "min_sources": 7,
+    "depends_on": [],
+    "output_file": "/research/findings/task-05.md",
+    "feeds_report_section": "Competitive Landscape: Who Is Closest to Mass Production?"
+  },
+  {
+    "id": "task-06",
+    "title": "Semi-Solid Battery Commercial Deployments vs. All-Solid-State Market Timeline (2025-2035)",
+    "angle": "Angle 6: Commercial Realities: \"Semi-Solid\" Deployment vs. All-Solid-State Timelines",
+    "type": "research",
+    "context": "This research investigates how solid-state batteries differ from conventional lithium-ion batteries and which companies are closest to mass production, to give investors and industry analysts a decision-ready overview that separates commercial reality from marketing hype. This task examines the near-term rollout of 'semi-solid' (hybrid solid-liquid) batteries versus the realistic adoption trajectory for true all-solid-state batteries through 2035. Chinese EV makers and cell developers (such as NIO/WeLion and SAIC IM Motors/QingTao) have already commercialized semi-solid packs containing a small liquid-electrolyte fraction to sidestep manufacturing bottlenecks.",
+    "questions": [
+      "Which electric vehicle models and manufacturers have already deployed 'semi-solid' or condensed hybrid solid-liquid batteries commercially (e.g., NIO ET7 with WeLion 150 kWh pack, SAIC IM Motors L6 with QingTao), and what are their liquid electrolyte fractions?",
+      "How do commercially available semi-solid batteries compare to standard liquid Li-ion and future all-solid-state batteries in terms of energy density, pack weight, charging speed, and retail/manufacturing cost?",
+      "What is the consensus forecast from leading market intelligence firms (such as BloombergNEF, S&P Global Mobility, and Rho Motion) for the initial commercial rollout and multi-GWh scaling of true all-solid-state batteries?",
+      "What is the projected EV market share and adoption curve for solid-state batteries across vehicle segments (niche hypercars/luxury vs. mass-market passenger EVs) through 2030 and 2035?"
+    ],
+    "scope": "Time window: Jan 2023-Feb 2025, with market forecasts extending to 2035. Geography: global, with emphasis on China's semi-solid deployments. Focus: commercialized semi-solid packs vs. all-solid-state adoption timelines. Exclude: micro-batteries and non-lithium chemistries except as brief comparisons.",
+    "preferred_sources": [
+      "Chinese automotive regulatory filings (Ministry of Industry and Information Technology - MIIT)",
+      "Official vehicle launch specifications and commercial road test data (NIO, IM Motors, Dongfeng)",
+      "Market research consensus forecasts (BloombergNEF, S&P Global Mobility, Rho Motion, IDTechEx)",
+      "Industry analyst reports tracking commercial battery chemistry market shares"
+    ],
+    "search_budget": 14,
+    "min_sources": 6,
+    "depends_on": [],
+    "output_file": "/research/findings/task-06.md",
+    "feeds_report_section": "Commercialization Timeline and Market Outlook (2025-2035)"
+  },
+  {
+    "id": "task-07",
+    "title": "Executive Summary Synthesis: Commercial Readiness Leaderboard and Strategic Verdict",
+    "angle": "Synthesis: Executive Summary and Commercial Readiness Leaderboard",
+    "type": "synthesis",
+    "context": "This research investigates how solid-state batteries differ from conventional lithium-ion batteries and which companies are closest to mass production, to give investors and industry analysts a decision-ready overview that separates commercial reality from marketing hype. This task synthesizes the findings of tasks 01-06 into an objective commercialization-readiness leaderboard and executive-level strategic verdict, reconciling vendor claims, third-party benchmarks, and multi-year timeline shifts across startups, incumbents, and OEMs.",
+    "questions": [
+      "What is the industry consensus ranking and competitive readiness leaderboard of all leading players (startups vs. incumbent cell makers vs. automotive OEMs) racing to mass-produce solid-state batteries?",
+      "How do the leading contenders categorize across objective commercialization tiers (e.g., Tier 1: near-commercial pilot/B-sample validation; Tier 2: early pilot/A-sample; Tier 3: laboratory R&D)?",
+      "What are the fundamental technical and commercial indicators that distinguish genuine all-solid-state mass-production readiness from marketing claims and interim semi-solid chemistries?",
+      "What are the key strategic takeaways and risk factors for automotive strategists, technology investors, and clean-tech supply chain planners evaluating the solid-state battery landscape for 2025-2035?"
+    ],
+    "scope": "Time window: Jan 2023-Feb 2025, with outlook to 2035. Geography: global. Focus: cross-company readiness synthesis and strategic takeaways. Exclude: re-researching technical or manufacturing detail already covered by tasks 01-06; micro-batteries.",
+    "preferred_sources": [
+      "Findings files produced by tasks 01-06 (read these first)",
+      "Industry synthesis reports and readiness rankings (BloombergNEF, Roland Berger, S&P Global Mobility)",
+      "Cross-company comparative technology audits and investment analyst coverage",
+      "Automotive industry benchmarking publications and global battery summits"
+    ],
+    "search_budget": 8,
+    "min_sources": 4,
+    "depends_on": ["task-01", "task-02", "task-03", "task-04", "task-05", "task-06"],
+    "output_file": "/research/findings/task-07.md",
+    "feeds_report_section": "Executive Summary"
+  }
+]
