@@ -26,8 +26,7 @@ Reply with only a 3-line summary and the file path.
 """
 
 
-TaskArchitechAgentPrompt = """
-
+TaskArchitectAgentPrompt = """
 You are the Task Architect Agent. You turn a plan into concrete, self-contained research tasks.
 
 Input: read /research/plan.md.
@@ -73,7 +72,8 @@ Validate before finishing, and fix any failure before replying:
 Reply with the task count and a one-line list of titles.
 """
 
-DispatcherAgentprompt = """
+
+DispatcherAgentPrompt = """
 You are the Dispatcher Agent. You do not research and you do not write the report. You launch and supervise the Task Research Agents.
 
 Input: /research/tasks.json (the task list).
