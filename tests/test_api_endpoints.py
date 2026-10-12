@@ -25,7 +25,7 @@ async def test_health_endpoint():
 async def test_create_research_validation_error():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Query too short (< 5 characters)
-        response = await client.post("/api/v1/research", json={"query": "hi"})
+        response = await client.post("/api/v1/researches", json={"query": "hi"})
         assert response.status_code == 422
 
 
@@ -33,7 +33,7 @@ async def test_create_research_validation_error():
 async def test_get_non_existent_research_session():
     random_id = str(uuid4())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(f"/api/v1/research/{random_id}")
+        response = await client.get(f"/api/v1/researches/{random_id}")
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
@@ -42,14 +42,14 @@ async def test_get_non_existent_research_session():
 async def test_start_non_existent_research_session():
     random_id = str(uuid4())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post(f"/api/v1/research/{random_id}/start")
+        response = await client.post(f"/api/v1/researches/{random_id}/start")
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
 async def test_api_workflow_create_and_start_with_mocked_agents():
-    """Test full API orchestration (create plan/tasks -> PENDING_APPROVAL -> start -> RUNNING)."""
+    """Test full API orchestration with /api/v1/researches."""
     now = datetime.now(timezone.utc)
     mock_session_id = uuid4()
 
@@ -86,12 +86,12 @@ async def test_api_workflow_create_and_start_with_mocked_agents():
     mock_session.plan = mock_plan
     mock_session.tasks = [mock_task]
 
-    # Test POST /api/v1/research
+    # Test POST /api/v1/researches
     with patch("apps.api.router.create_research_session", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = mock_session
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/v1/research", json={"query": "Explain solid state batteries"})
+            resp = await client.post("/api/v1/researches", json={"query": "Explain solid state batteries"})
             assert resp.status_code == 201
             data = resp.json()
             assert data["id"] == str(mock_session_id)
@@ -100,15 +100,146 @@ async def test_api_workflow_create_and_start_with_mocked_agents():
             assert len(data["tasks"]) == 1
             assert data["tasks"][0]["task_key"] == "task-01"
 
-    # Test POST /api/v1/research/{id}/start
+    # Test POST /api/v1/researches/{id}/start
     with patch("apps.api.router.get_research_session", new_callable=AsyncMock) as mock_get, \
          patch("apps.api.router.execute_research_workflow", new_callable=AsyncMock) as mock_exec:
         mock_get.return_value = mock_session
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post(f"/api/v1/research/{mock_session_id}/start")
+            resp = await client.post(f"/api/v1/researches/{mock_session_id}/start")
             assert resp.status_code == 202
             data = resp.json()
             assert data["id"] == str(mock_session_id)
             assert data["status"] == "RUNNING"
             assert "initiated in background" in data["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_list_researches_endpoint():
+    now = datetime.now(timezone.utc)
+    mock_sessions = [
+        ResearchSession(
+            id=uuid4(),
+            query="Query 1",
+            status=ResearchStatus.PENDING_APPROVAL,
+            created_at=now,
+            updated_at=now,
+        ),
+        ResearchSession(
+            id=uuid4(),
+            query="Query 2",
+            status=ResearchStatus.COMPLETED,
+            created_at=now,
+            updated_at=now,
+        ),
+    ]
+
+    with patch("apps.api.router.list_research_sessions", new_callable=AsyncMock) as mock_list:
+        mock_list.return_value = mock_sessions
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/v1/researches?limit=10&offset=0")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert len(data) == 2
+            assert data[0]["query"] == "Query 1"
+            assert data[1]["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_delete_research_endpoint():
+    session_id = uuid4()
+    with patch("apps.api.router.delete_research_session", new_callable=AsyncMock) as mock_del:
+        mock_del.return_value = True
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.delete(f"/api/v1/researches/{session_id}")
+            assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_revise_research_endpoint():
+    now = datetime.now(timezone.utc)
+    session_id = uuid4()
+    mock_revised_session = ResearchSession(
+        id=session_id,
+        query="Original query",
+        status=ResearchStatus.PENDING_APPROVAL,
+        created_at=now,
+        updated_at=now,
+    )
+    mock_revised_plan = ResearchPlan(
+        id=uuid4(),
+        session_id=session_id,
+        title="Revised Plan",
+        content="# Revised Plan Content",
+        created_at=now,
+        updated_at=now,
+    )
+    mock_revised_session.plan = mock_revised_plan
+
+    with patch("apps.api.router.revise_research_session", new_callable=AsyncMock) as mock_rev:
+        mock_rev.return_value = mock_revised_session
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.put(
+                f"/api/v1/researches/{session_id}",
+                json={"feedback": "Focus more on solid electrolyte interface."},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["id"] == str(session_id)
+            assert data["plan"]["title"] == "Revised Plan"
+            assert "Revised Plan Content" in data["plan"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_get_tasks_endpoints():
+    now = datetime.now(timezone.utc)
+    session_id = uuid4()
+    mock_task_id = uuid4()
+    mock_task = ResearchTask(
+        id=mock_task_id,
+        session_id=session_id,
+        task_key="task-01",
+        title="Task 1",
+        task_type="research",
+        questions=["Q1"],
+        preferred_sources=[],
+        search_budget=15,
+        min_sources=6,
+        depends_on=[],
+        status=TaskStatus.PENDING,
+        created_at=now,
+        updated_at=now,
+    )
+
+    mock_session = ResearchSession(
+        id=session_id,
+        query="Test query",
+        status=ResearchStatus.PENDING_APPROVAL,
+        created_at=now,
+        updated_at=now,
+    )
+
+    with patch("apps.api.router.get_research_session", new_callable=AsyncMock) as mock_get_sess, \
+         patch("apps.api.router.get_research_tasks", new_callable=AsyncMock) as mock_get_tasks, \
+         patch("apps.api.router.get_research_task", new_callable=AsyncMock) as mock_get_task:
+        mock_get_sess.return_value = mock_session
+        mock_get_tasks.return_value = [mock_task]
+        mock_get_task.return_value = mock_task
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # 1. GET /api/v1/researches/{id}/tasks
+            resp1 = await client.get(f"/api/v1/researches/{session_id}/tasks")
+            assert resp1.status_code == 200
+            tasks_data = resp1.json()
+            assert len(tasks_data) == 1
+            assert tasks_data[0]["task_key"] == "task-01"
+
+            # 2. GET /api/v1/researches/{id}/tasks/task-01
+            resp2 = await client.get(f"/api/v1/researches/{session_id}/tasks/task-01")
+            assert resp2.status_code == 200
+            task_data = resp2.json()
+            assert task_data["task_key"] == "task-01"
+            assert task_data["title"] == "Task 1"

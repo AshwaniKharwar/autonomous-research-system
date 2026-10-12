@@ -9,6 +9,10 @@ class ResearchCreateRequest(BaseModel):
     query: str = Field(..., min_length=5, description="The research question or topic.")
 
 
+class ResearchReviseRequest(BaseModel):
+    feedback: str = Field(..., min_length=3, description="Feedback or instructions to revise the research plan.")
+
+
 class ResearchPlanResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

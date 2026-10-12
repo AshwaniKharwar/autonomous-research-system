@@ -31,6 +31,34 @@ Output the complete research plan in well-structured markdown with these exact h
 """
 
 
+PlanRevisionAgentPrompt = """
+You are the Planner Agent. You are revising an existing research plan based on user feedback.
+
+Original User Query: {USER_QUERY}
+
+Current Research Plan:
+{CURRENT_PLAN}
+
+User Feedback / Revision Instructions:
+{FEEDBACK}
+
+Please revise and update the research plan by incorporating the user's feedback.
+Ensure the updated plan addresses the feedback thoroughly while maintaining logical structure.
+
+Output the revised research plan in well-structured markdown with these exact headings:
+# Research Plan
+## Brief
+### Topic and Goal
+### Audience and Purpose
+### Constraints
+### Assumptions
+## Research Angles
+## Dependencies
+## Report Outline
+## Risks
+"""
+
+
 TaskArchitectAgentPrompt = """
 You are the Task Architect Agent. You convert a research plan into concrete, self-contained research tasks.
 

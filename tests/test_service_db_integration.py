@@ -5,8 +5,13 @@ from apps.db.database import async_session_factory
 from apps.db.models import ResearchSession, ResearchStatus, TaskStatus
 from apps.research_agent.service import (
     create_research_session,
+    delete_research_session,
     execute_research_workflow,
     get_research_session,
+    get_research_task,
+    get_research_tasks,
+    list_research_sessions,
+    revise_research_session,
 )
 
 
@@ -97,3 +102,86 @@ async def test_full_service_postgres_workflow():
         # Clean up test session
         await db.delete(completed)
         await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_service_plan_revision_and_task_queries():
+    sample_query = "What is quantum dot display technology?"
+    initial_plan = "# Plan 1\nQuantum dots..."
+    initial_tasks = [
+        {
+            "task_key": "task-01",
+            "title": "Quantum Dot Synthesis",
+            "angle": "Synthesis",
+            "questions": ["How are quantum dots synthesized?"],
+            "depends_on": [],
+        }
+    ]
+
+    with patch("apps.research_agent.service.research_planner", new_callable=AsyncMock) as mock_plan, \
+         patch("apps.research_agent.service.task_architect", new_callable=AsyncMock) as mock_arch:
+        mock_plan.return_value = initial_plan
+        mock_arch.return_value = initial_tasks
+
+        async with async_session_factory() as db:
+            session = await create_research_session(sample_query, db)
+            session_id = session.id
+
+    revised_plan = "# Revised Plan\nQD-OLED vs Micro-LED..."
+    revised_tasks = [
+        {
+            "task_key": "task-01",
+            "title": "QD-OLED Manufacturing",
+            "angle": "Manufacturing",
+            "questions": ["How are QD-OLED panels manufactured?"],
+            "depends_on": [],
+        },
+        {
+            "task_key": "task-02",
+            "title": "Micro-LED Comparison",
+            "angle": "Comparison",
+            "questions": ["How does Micro-LED compare?"],
+            "depends_on": ["task-01"],
+        },
+    ]
+
+    # Test Plan Revision
+    with patch("apps.research_agent.service.revise_research_plan", new_callable=AsyncMock) as mock_rev_plan, \
+         patch("apps.research_agent.service.task_architect", new_callable=AsyncMock) as mock_rev_arch:
+        mock_rev_plan.return_value = revised_plan
+        mock_rev_arch.return_value = revised_tasks
+
+        async with async_session_factory() as db:
+            revised_session = await revise_research_session(
+                session_id=session_id,
+                feedback="Compare with Micro-LED as well.",
+                db=db,
+            )
+            assert revised_session.plan.content == revised_plan
+            assert len(revised_session.tasks) == 2
+            assert revised_session.tasks[1].task_key == "task-02"
+
+    # Test Task Listing & Single Task Lookup
+    async with async_session_factory() as db:
+        tasks = await get_research_tasks(session_id, db)
+        assert len(tasks) == 2
+        assert tasks[0].task_key == "task-01"
+
+        single_task = await get_research_task(session_id, "task-02", db)
+        assert single_task is not None
+        assert single_task.title == "Micro-LED Comparison"
+
+        single_task_by_uuid = await get_research_task(session_id, str(single_task.id), db)
+        assert single_task_by_uuid is not None
+        assert single_task_by_uuid.task_key == "task-02"
+
+        # Test Listing sessions
+        sessions = await list_research_sessions(db, status=ResearchStatus.PENDING_APPROVAL)
+        assert any(s.id == session_id for s in sessions)
+
+        # Test Deletion
+        deleted = await delete_research_session(session_id, db)
+        assert deleted is True
+
+        queried_after = await get_research_session(session_id, db)
+        assert queried_after is None
