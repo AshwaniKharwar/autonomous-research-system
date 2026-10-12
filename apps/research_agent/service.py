@@ -157,16 +157,17 @@ async def execute_research_workflow(session_id: UUID) -> None:
                 logger.error(f"Session {session_id} not found for background execution.")
                 return
 
-            if session.status != ResearchStatus.PENDING_APPROVAL:
+            if session.status not in (ResearchStatus.PENDING_APPROVAL, ResearchStatus.RUNNING):
                 logger.warning(
                     f"Session {session_id} is in status '{session.status}', cannot start tasks."
                 )
                 return
 
-            # 2. Update status to RUNNING
-            session.status = ResearchStatus.RUNNING
-            await db.commit()
-            logger.info(f"Session {session_id} status changed to RUNNING.")
+            # 2. Update status to RUNNING if still pending approval
+            if session.status == ResearchStatus.PENDING_APPROVAL:
+                session.status = ResearchStatus.RUNNING
+                await db.commit()
+                logger.info(f"Session {session_id} status changed to RUNNING.")
 
             # 3. Dispatch tasks wave by wave
             all_findings, _ = await dispatch_research_session(session_id, db)

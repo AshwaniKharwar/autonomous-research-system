@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.main import app
+from apps.db.database import get_db
 from apps.db.models import (
     ResearchPlan,
     ResearchSession,
@@ -101,17 +103,116 @@ async def test_api_workflow_create_and_start_with_mocked_agents():
             assert data["tasks"][0]["task_key"] == "task-01"
 
     # Test POST /api/v1/researches/{id}/start
-    with patch("apps.api.router.get_research_session", new_callable=AsyncMock) as mock_get, \
-         patch("apps.api.router.execute_research_workflow", new_callable=AsyncMock) as mock_exec:
-        mock_get.return_value = mock_session
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_res = MagicMock()
+    mock_res.rowcount = 1
+    mock_db.execute.return_value = mock_res
+    app.dependency_overrides[get_db] = lambda: mock_db
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post(f"/api/v1/researches/{mock_session_id}/start")
-            assert resp.status_code == 202
-            data = resp.json()
-            assert data["id"] == str(mock_session_id)
-            assert data["status"] == "RUNNING"
-            assert "initiated in background" in data["message"].lower()
+    try:
+        with patch("apps.api.router.execute_research_workflow", new_callable=AsyncMock) as mock_exec:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post(f"/api/v1/researches/{mock_session_id}/start")
+                assert resp.status_code == 202
+                data = resp.json()
+                assert data["id"] == str(mock_session_id)
+                assert data["status"] == "RUNNING"
+                assert "initiated in background" in data["message"].lower()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_start_research_endpoint_already_running():
+    now = datetime.now(timezone.utc)
+    session_id = uuid4()
+    mock_session = ResearchSession(
+        id=session_id,
+        query="Running query",
+        status=ResearchStatus.RUNNING,
+        created_at=now,
+        updated_at=now,
+    )
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_res = MagicMock()
+    mock_res.rowcount = 0
+    mock_db.execute.return_value = mock_res
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    try:
+        with patch("apps.api.router.get_research_session", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_session
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post(f"/api/v1/researches/{session_id}/start")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["id"] == str(session_id)
+                assert data["status"] == "RUNNING"
+                assert "already running" in data["message"].lower()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_start_research_endpoint_already_completed():
+    now = datetime.now(timezone.utc)
+    session_id = uuid4()
+    mock_session = ResearchSession(
+        id=session_id,
+        query="Completed query",
+        status=ResearchStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+    )
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_res = MagicMock()
+    mock_res.rowcount = 0
+    mock_db.execute.return_value = mock_res
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    try:
+        with patch("apps.api.router.get_research_session", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_session
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post(f"/api/v1/researches/{session_id}/start")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["id"] == str(session_id)
+                assert data["status"] == "COMPLETED"
+                assert "task is completed" in data["message"].lower()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_start_research_endpoint_failed_status_conflict():
+    now = datetime.now(timezone.utc)
+    session_id = uuid4()
+    mock_session = ResearchSession(
+        id=session_id,
+        query="Failed query",
+        status=ResearchStatus.FAILED,
+        created_at=now,
+        updated_at=now,
+    )
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_res = MagicMock()
+    mock_res.rowcount = 0
+    mock_db.execute.return_value = mock_res
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    try:
+        with patch("apps.api.router.get_research_session", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_session
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post(f"/api/v1/researches/{session_id}/start")
+                assert resp.status_code == 409
+                assert "cannot be started" in resp.json()["detail"].lower()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.mark.asyncio

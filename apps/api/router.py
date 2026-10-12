@@ -1,6 +1,7 @@
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.schemas import (
     ResearchCreateRequest,
@@ -10,7 +11,7 @@ from apps.api.schemas import (
     StartResearchResponse,
 )
 from apps.db.database import get_db
-from apps.db.models import ResearchStatus
+from apps.db.models import ResearchSession, ResearchStatus
 from apps.research_agent.service import (
     create_research_session,
     delete_research_session,
@@ -141,27 +142,50 @@ async def delete_research(
 async def start_research_tasks(
     id: UUID,
     background_tasks: BackgroundTasks,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     """Approve the generated research plan and subtasks, then start wave execution.
 
-    Changes the session status to RUNNING and dispatches research agents
+    Changes the session status to RUNNING atomically and dispatches research agents
     in the background. Clients can poll GET /api/v1/researches/{id} for progress.
     """
-    session = await get_research_session(id, db)
-    if not session:
+    stmt = (
+        update(ResearchSession)
+        .where(
+            ResearchSession.id == id,
+            ResearchSession.status == ResearchStatus.PENDING_APPROVAL,
+        )
+        .values(status=ResearchStatus.RUNNING)
+    )
+    res = await db.execute(stmt)
+    if res.rowcount == 0:
+        session = await get_research_session(id, db)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Research session with ID {id} not found.",
+            )
+        if session.status == ResearchStatus.RUNNING:
+            response.status_code = status.HTTP_200_OK
+            return StartResearchResponse(
+                id=id,
+                status=session.status,
+                message=f"Session {id} is already running.",
+            )
+        if session.status == ResearchStatus.COMPLETED:
+            response.status_code = status.HTTP_200_OK
+            return StartResearchResponse(
+                id=id,
+                status=session.status,
+                message=f"Session {id} task is completed.",
+            )
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Research session with ID {id} not found.",
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session {id} cannot be started (current status: '{session.status}').",
         )
 
-    if session.status != ResearchStatus.PENDING_APPROVAL:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Session {id} is in '{session.status}' status. Only 'PENDING_APPROVAL' sessions can be started.",
-        )
-
-    # Queue background execution
+    await db.commit()
     background_tasks.add_task(execute_research_workflow, id)
 
     return StartResearchResponse(
