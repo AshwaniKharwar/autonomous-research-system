@@ -238,3 +238,47 @@ async def test_execute_research_workflow_rejects_completed_status():
         await db.delete(final_session)
         await db.commit()
 
+
+@pytest.mark.asyncio
+async def test_service_db_transaction_not_held_during_llm_calls():
+    query = "Transaction pool test query"
+    plan_text = "# Test Plan"
+    tasks_data = [
+        {
+            "task_key": "task-01",
+            "title": "Task 1",
+            "depends_on": [],
+        }
+    ]
+
+    async with async_session_factory() as db:
+        async def mock_plan(q):
+            assert not db.in_transaction(), "DB transaction must not be active during research_planner"
+            return plan_text
+
+        async def mock_arch(q, p):
+            assert not db.in_transaction(), "DB transaction must not be active during task_architect"
+            return tasks_data
+
+        with patch("apps.research_agent.service.research_planner", side_effect=mock_plan), \
+             patch("apps.research_agent.service.task_architect", side_effect=mock_arch):
+            session = await create_research_session(query, db)
+            session_id = session.id
+
+        async def mock_rev_plan(query, current_plan, feedback):
+            assert not db.in_transaction(), "DB transaction must not be active during revise_research_plan"
+            return "# Revised Plan"
+
+        async def mock_rev_arch(q, p):
+            assert not db.in_transaction(), "DB transaction must not be active during task_architect in revise"
+            return tasks_data
+
+        with patch("apps.research_agent.service.revise_research_plan", side_effect=mock_rev_plan), \
+             patch("apps.research_agent.service.task_architect", side_effect=mock_rev_arch):
+            revised = await revise_research_session(session_id, "Make it shorter", db)
+            assert revised.plan.content == "# Revised Plan"
+
+        await db.delete(revised)
+        await db.commit()
+
+

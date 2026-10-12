@@ -1,6 +1,6 @@
 import logging
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from apps.db.database import async_session_factory
@@ -27,33 +27,35 @@ async def create_research_session(
     """Phase 1: Create plan & subtasks, persist in Postgres with PENDING_APPROVAL status."""
     logger.info(f"Creating research session for query: '{query}'")
 
-    # 1. Initialize session record
+    session_id = uuid4()
+
+    # 1. Generate research plan outside DB transaction
+    logger.info(f"Generating research plan for session {session_id}...")
+    plan_content = await research_planner(query)
+
+    # 2. Architect subtasks from plan outside DB transaction
+    logger.info(f"Architecting subtasks for session {session_id}...")
+    tasks_data = await task_architect(query, plan_content)
+
+    # 3. Persist all records in a single fast atomic transaction
     session = ResearchSession(
+        id=session_id,
         query=query,
         status=ResearchStatus.PENDING_APPROVAL,
     )
     db.add(session)
-    await db.flush()  # obtain session.id
 
-    # 2. Generate research plan
-    logger.info(f"Generating research plan for session {session.id}...")
-    plan_content = await research_planner(query)
     plan = ResearchPlan(
-        session_id=session.id,
+        session_id=session_id,
         title=f"Plan: {query[:100]}",
         summary=f"Research plan for: {query[:200]}",
         content=plan_content,
     )
     db.add(plan)
-    await db.flush()
-
-    # 3. Architect subtasks from plan
-    logger.info(f"Architecting subtasks for session {session.id}...")
-    tasks_data = await task_architect(query, plan_content)
 
     for t_data in tasks_data:
         task_row = ResearchTask(
-            session_id=session.id,
+            session_id=session_id,
             task_key=t_data["task_key"],
             title=t_data["title"],
             angle=t_data.get("angle"),
@@ -70,8 +72,8 @@ async def create_research_session(
         db.add(task_row)
 
     await db.commit()
-    await db.refresh(session)
-    logger.info(f"Session {session.id} created with {len(tasks_data)} tasks. Awaiting user approval.")
+    await db.refresh(session, attribute_names=["plan", "tasks"])
+    logger.info(f"Session {session_id} created with {len(tasks_data)} tasks. Awaiting user approval.")
     return session
 
 
@@ -90,34 +92,46 @@ async def revise_research_session(
             f"Cannot revise session in '{session.status}' status. Only 'PENDING_APPROVAL' sessions can be revised."
         )
 
+    query = session.query
     current_plan_content = session.plan.content if session.plan else ""
+
+    # Release checked-out connection back to the pool before running slow LLM calls
+    await db.rollback()
 
     logger.info(f"Revising plan for session {session_id} with user feedback...")
     revised_plan_content = await revise_research_plan(
-        query=session.query,
+        query=query,
         current_plan=current_plan_content,
         feedback=feedback,
     )
+
+    # Re-architect tasks based on revised plan outside DB transaction
+    logger.info(f"Re-architecting subtasks for revised plan in session {session_id}...")
+    new_tasks_data = await task_architect(query, revised_plan_content)
+
+    # Persist all revisions in a single fast atomic transaction
+    session = await get_research_session(session_id, db)
+    if not session:
+        raise ValueError(f"Research session with ID {session_id} not found.")
+
+    if session.status != ResearchStatus.PENDING_APPROVAL:
+        raise ValueError(
+            f"Cannot revise session in '{session.status}' status. Only 'PENDING_APPROVAL' sessions can be revised."
+        )
 
     if session.plan:
         session.plan.content = revised_plan_content
     else:
         plan = ResearchPlan(
             session_id=session.id,
-            title=f"Plan: {session.query[:100]}",
-            summary=f"Revised research plan for: {session.query[:200]}",
+            title=f"Plan: {query[:100]}",
+            summary=f"Revised research plan for: {query[:200]}",
             content=revised_plan_content,
         )
         db.add(plan)
-    await db.flush()
-
-    # Re-architect tasks based on revised plan
-    logger.info(f"Re-architecting subtasks for revised plan in session {session_id}...")
-    new_tasks_data = await task_architect(session.query, revised_plan_content)
 
     # Delete existing pending tasks
     await db.execute(delete(ResearchTask).where(ResearchTask.session_id == session_id))
-    await db.flush()
 
     for t_data in new_tasks_data:
         task_row = ResearchTask(
@@ -138,7 +152,7 @@ async def revise_research_session(
         db.add(task_row)
 
     await db.commit()
-    await db.refresh(session)
+    await db.refresh(session, attribute_names=["plan", "tasks"])
     logger.info(f"Session {session.id} plan revised and tasks updated successfully.")
     return session
 
