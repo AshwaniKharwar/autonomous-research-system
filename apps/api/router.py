@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.schemas import (
+    CancelResearchResponse,
     ResearchCreateRequest,
     ResearchReviseRequest,
     ResearchSessionResponse,
@@ -13,6 +14,7 @@ from apps.api.schemas import (
 from apps.db.database import get_db
 from apps.db.models import ResearchSession, ResearchStatus
 from apps.research_agent.service import (
+    cancel_research_session,
     create_research_session,
     delete_research_session,
     execute_research_workflow,
@@ -192,6 +194,49 @@ async def start_research_tasks(
         id=id,
         status=ResearchStatus.RUNNING,
         message="Research approved. Task execution initiated in background.",
+    )
+
+
+@router.post(
+    "/{id}/cancel",
+    response_model=CancelResearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Cancel In-Progress or Pending Research Session",
+)
+async def cancel_research(
+    id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel an in-progress or pending research session.
+
+    - Transitions 'RUNNING' and 'PENDING_APPROVAL' sessions to 'CANCELLED'.
+    - Halts running background workflow execution.
+    - Returns 200 OK if session is already 'CANCELLED' (idempotent).
+    - Returns 409 Conflict if session is 'COMPLETED' or 'FAILED'.
+    - Returns 404 Not Found if session does not exist.
+    """
+    session, outcome = await cancel_research_session(id, db)
+    if outcome == "not_found":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Research session with ID {id} not found.",
+        )
+    if outcome == "already_cancelled":
+        return CancelResearchResponse(
+            id=id,
+            status=ResearchStatus.CANCELLED,
+            message=f"Session {id} is already cancelled.",
+        )
+    if outcome == "conflict":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session {id} cannot be cancelled (current status: '{session.status}').",
+        )
+
+    return CancelResearchResponse(
+        id=id,
+        status=ResearchStatus.CANCELLED,
+        message=f"Session {id} cancelled successfully.",
     )
 
 

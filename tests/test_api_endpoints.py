@@ -344,3 +344,103 @@ async def test_get_tasks_endpoints():
             task_data = resp2.json()
             assert task_data["task_key"] == "task-01"
             assert task_data["title"] == "Task 1"
+
+
+@pytest.mark.asyncio
+async def test_cancel_non_existent_research_session():
+    random_id = str(uuid4())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(f"/api/v1/researches/{random_id}/cancel")
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_approval_research_session():
+    now = datetime.now(timezone.utc)
+    session_id = uuid4()
+    mock_session = ResearchSession(
+        id=session_id,
+        query="Test query",
+        status=ResearchStatus.CANCELLED,
+        created_at=now,
+        updated_at=now,
+    )
+
+    with patch("apps.api.router.cancel_research_session", new_callable=AsyncMock) as mock_cancel:
+        mock_cancel.return_value = (mock_session, "cancelled")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(f"/api/v1/researches/{session_id}/cancel")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["id"] == str(session_id)
+            assert data["status"] == "CANCELLED"
+            assert "cancelled successfully" in data["message"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_already_cancelled_session_idempotent():
+    now = datetime.now(timezone.utc)
+    session_id = uuid4()
+    mock_session = ResearchSession(
+        id=session_id,
+        query="Test query",
+        status=ResearchStatus.CANCELLED,
+        created_at=now,
+        updated_at=now,
+    )
+
+    with patch("apps.api.router.cancel_research_session", new_callable=AsyncMock) as mock_cancel:
+        mock_cancel.return_value = (mock_session, "already_cancelled")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(f"/api/v1/researches/{session_id}/cancel")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["id"] == str(session_id)
+            assert data["status"] == "CANCELLED"
+            assert "already cancelled" in data["message"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_completed_session_conflict():
+    now = datetime.now(timezone.utc)
+    session_id = uuid4()
+    mock_session = ResearchSession(
+        id=session_id,
+        query="Test query",
+        status=ResearchStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+    )
+
+    with patch("apps.api.router.cancel_research_session", new_callable=AsyncMock) as mock_cancel:
+        mock_cancel.return_value = (mock_session, "conflict")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(f"/api/v1/researches/{session_id}/cancel")
+            assert resp.status_code == 409
+            assert "cannot be cancelled" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_failed_session_conflict():
+    now = datetime.now(timezone.utc)
+    session_id = uuid4()
+    mock_session = ResearchSession(
+        id=session_id,
+        query="Test query",
+        status=ResearchStatus.FAILED,
+        created_at=now,
+        updated_at=now,
+    )
+
+    with patch("apps.api.router.cancel_research_session", new_callable=AsyncMock) as mock_cancel:
+        mock_cancel.return_value = (mock_session, "conflict")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(f"/api/v1/researches/{session_id}/cancel")
+            assert resp.status_code == 409
+            assert "cannot be cancelled" in resp.json()["detail"]
+

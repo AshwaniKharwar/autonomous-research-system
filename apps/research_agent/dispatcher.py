@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.db.database import async_session_factory as default_session_factory
 from apps.db.models import DispatchLog, ResearchTask, TaskStatus
+from apps.research_agent.cancellation import is_cancelled
 from apps.research_agent.task_agent import run_task_agent
 
 logger = logging.getLogger("research_agent.dispatcher")
@@ -98,6 +99,21 @@ async def dispatch_research_session(
     summary_logs: list[str] = []
 
     for wave_idx, wave_tasks in enumerate(waves, 1):
+        if is_cancelled(session_id):
+            logger.info(f"Session {session_id} is cancelled. Halting wave execution.")
+            async with factory() as task_db:
+                log_entry = DispatchLog(
+                    session_id=session_id,
+                    task_key=f"wave-{wave_idx}",
+                    wave=wave_idx,
+                    status="CANCELLED",
+                    note="Workflow cancelled; remaining waves skipped.",
+                )
+                task_db.add(log_entry)
+                await task_db.commit()
+            summary_logs.append(f"Wave {wave_idx}: CANCELLED (Workflow cancelled)")
+            break
+
         logger.info(f"Executing Wave {wave_idx} with {len(wave_tasks)} tasks...")
 
         async def _execute_single_task(task_data: dict[str, Any]):
@@ -105,6 +121,10 @@ async def dispatch_research_session(
             deps = task_data.get("depends_on") or []
 
             async with semaphore:
+                if is_cancelled(session_id):
+                    logger.info(f"Task {task_key} skipped because session {session_id} was cancelled.")
+                    return f"Wave {wave_idx} - {task_key}: SKIPPED (Session cancelled)"
+
                 # Check if any dependencies failed or are missing
                 missing_deps = [d for d in deps if d not in all_findings]
                 if missing_deps:

@@ -84,3 +84,10 @@ class StartResearchResponse(BaseModel):
     id: UUID
     status: ResearchStatus
     message: str
+
+
+class CancelResearchResponse(BaseModel):
+    id: UUID
+    status: ResearchStatus
+    message: str
+

@@ -12,6 +12,12 @@ from apps.db.models import (
     ResearchTask,
     TaskStatus,
 )
+from apps.research_agent.cancellation import (
+    cancel_session,
+    clear_token,
+    is_cancelled,
+    register_token,
+)
 from apps.research_agent.dispatcher import dispatch_research_session
 from apps.research_agent.planner import research_planner, revise_research_plan
 from apps.research_agent.report_writer import report_writer
@@ -160,91 +166,149 @@ async def revise_research_session(
 async def execute_research_workflow(session_id: UUID) -> None:
     """Phase 2: Transition status to RUNNING, dispatch tasks wave-by-wave, and compile report."""
     logger.info(f"Starting background execution for session {session_id}...")
+    register_token(session_id)
 
-    async with async_session_factory() as db:
-        try:
-            # 1. Fetch and validate session
-            stmt = select(ResearchSession).where(ResearchSession.id == session_id)
-            result = await db.execute(stmt)
-            session = result.scalar_one_or_none()
-            if not session:
-                logger.error(f"Session {session_id} not found for background execution.")
-                return
-
-            if session.status not in (ResearchStatus.PENDING_APPROVAL, ResearchStatus.RUNNING):
-                logger.warning(
-                    f"Session {session_id} is in status '{session.status}', cannot start tasks."
-                )
-                return
-
-            # 2. Update status to RUNNING if still pending approval
-            if session.status == ResearchStatus.PENDING_APPROVAL:
-                session.status = ResearchStatus.RUNNING
-                await db.commit()
-                logger.info(f"Session {session_id} status changed to RUNNING.")
-
-            # 3. Dispatch tasks wave by wave
-            all_findings, _ = await dispatch_research_session(session_id, db)
-
-            if not all_findings:
-                logger.error(f"All research tasks failed for session {session_id}.")
-                session.status = ResearchStatus.FAILED
-                await db.commit()
-                return
-
-            # 4. Fetch plan and tasks for report compilation
-            plan_stmt = select(ResearchPlan).where(ResearchPlan.session_id == session_id)
-            plan_res = await db.execute(plan_stmt)
-            plan = plan_res.scalar_one_or_none()
-            plan_content = plan.content if plan else ""
-
-            tasks_stmt = select(ResearchTask).where(ResearchTask.session_id == session_id)
-            tasks_res = await db.execute(tasks_stmt)
-            tasks = list(tasks_res.scalars().all())
-
-            task_dicts = [
-                {
-                    "task_key": t.task_key,
-                    "title": t.title,
-                    "feeds_report_section": t.angle or "",
-                }
-                for t in tasks
-            ]
-
-            # 5. Compile final report
-            logger.info(f"Compiling final report for session {session_id}...")
-            report_text = await report_writer(
-                query=session.query,
-                plan_content=plan_content,
-                tasks=task_dicts,
-                findings=all_findings,
-            )
-
-            # 6. Save report in DB
-            report = ResearchReport(
-                session_id=session.id,
-                content=report_text,
-                word_count=len(report_text.split()),
-            )
-            db.add(report)
-
-            # 7. Mark session COMPLETED
-            session.status = ResearchStatus.COMPLETED
-            await db.commit()
-            logger.info(f"Session {session_id} successfully completed and saved to Postgres.")
-
-        except Exception as e:
-            logger.error(f"Execution failed for session {session_id}: {e}", exc_info=True)
+    try:
+        async with async_session_factory() as db:
             try:
-                await db.rollback()
+                # 1. Fetch and validate session
+                stmt = select(ResearchSession).where(ResearchSession.id == session_id)
+                result = await db.execute(stmt)
+                session = result.scalar_one_or_none()
+                if not session:
+                    logger.error(f"Session {session_id} not found for background execution.")
+                    return
+
+                if session.status == ResearchStatus.CANCELLED or is_cancelled(session_id):
+                    logger.info(f"Session {session_id} is cancelled. Aborting background execution.")
+                    return
+
+                if session.status not in (ResearchStatus.PENDING_APPROVAL, ResearchStatus.RUNNING):
+                    logger.warning(
+                        f"Session {session_id} is in status '{session.status}', cannot start tasks."
+                    )
+                    return
+
+                # 2. Update status to RUNNING if still pending approval
+                if session.status == ResearchStatus.PENDING_APPROVAL:
+                    session.status = ResearchStatus.RUNNING
+                    await db.commit()
+                    logger.info(f"Session {session_id} status changed to RUNNING.")
+
+                # 3. Dispatch tasks wave by wave
+                all_findings, _ = await dispatch_research_session(session_id, db)
+
+                # Check if session was cancelled during wave execution
+                if is_cancelled(session_id):
+                    logger.info(
+                        f"Session {session_id} was cancelled during dispatch. Aborting report compilation."
+                    )
+                    return
+
                 stmt = select(ResearchSession).where(ResearchSession.id == session_id)
                 res = await db.execute(stmt)
-                failed_session = res.scalar_one_or_none()
-                if failed_session:
-                    failed_session.status = ResearchStatus.FAILED
+                curr_session = res.scalar_one_or_none()
+                if curr_session and curr_session.status == ResearchStatus.CANCELLED:
+                    logger.info(
+                        f"Session {session_id} is marked CANCELLED in DB. Aborting report compilation."
+                    )
+                    return
+
+                if not all_findings:
+                    logger.error(f"All research tasks failed for session {session_id}.")
+                    session.status = ResearchStatus.FAILED
                     await db.commit()
-            except Exception as rollback_err:
-                logger.error(f"Error updating status to FAILED for session {session_id}: {rollback_err}")
+                    return
+
+                # 4. Fetch plan and tasks for report compilation
+                plan_stmt = select(ResearchPlan).where(ResearchPlan.session_id == session_id)
+                plan_res = await db.execute(plan_stmt)
+                plan = plan_res.scalar_one_or_none()
+                plan_content = plan.content if plan else ""
+
+                tasks_stmt = select(ResearchTask).where(ResearchTask.session_id == session_id)
+                tasks_res = await db.execute(tasks_stmt)
+                tasks = list(tasks_res.scalars().all())
+
+                task_dicts = [
+                    {
+                        "task_key": t.task_key,
+                        "title": t.title,
+                        "feeds_report_section": t.angle or "",
+                    }
+                    for t in tasks
+                ]
+
+                # 5. Compile final report
+                logger.info(f"Compiling final report for session {session_id}...")
+                report_text = await report_writer(
+                    query=session.query,
+                    plan_content=plan_content,
+                    tasks=task_dicts,
+                    findings=all_findings,
+                )
+
+                # 6. Save report in DB
+                report = ResearchReport(
+                    session_id=session.id,
+                    content=report_text,
+                    word_count=len(report_text.split()),
+                )
+                db.add(report)
+
+                # 7. Mark session COMPLETED
+                session.status = ResearchStatus.COMPLETED
+                await db.commit()
+                logger.info(f"Session {session_id} successfully completed and saved to Postgres.")
+
+            except Exception as e:
+                logger.error(f"Execution failed for session {session_id}: {e}", exc_info=True)
+                try:
+                    await db.rollback()
+                    stmt = select(ResearchSession).where(ResearchSession.id == session_id)
+                    res = await db.execute(stmt)
+                    failed_session = res.scalar_one_or_none()
+                    if failed_session and failed_session.status != ResearchStatus.CANCELLED:
+                        failed_session.status = ResearchStatus.FAILED
+                        await db.commit()
+                except Exception as rollback_err:
+                    logger.error(f"Error updating status to FAILED for session {session_id}: {rollback_err}")
+    finally:
+        clear_token(session_id)
+
+
+async def cancel_research_session(
+    session_id: UUID,
+    db: AsyncSession,
+) -> tuple[ResearchSession | None, str]:
+    """Cancel a research session if it is PENDING_APPROVAL or RUNNING.
+
+    Returns (session, outcome) where outcome is one of:
+    - "not_found"
+    - "already_cancelled"
+    - "conflict"
+    - "cancelled"
+    """
+    session = await get_research_session(session_id, db)
+    if not session:
+        return None, "not_found"
+
+    if session.status == ResearchStatus.CANCELLED:
+        return session, "already_cancelled"
+
+    if session.status in (ResearchStatus.COMPLETED, ResearchStatus.FAILED):
+        return session, "conflict"
+
+    # Set status to CANCELLED in DB
+    session.status = ResearchStatus.CANCELLED
+    await db.commit()
+    await db.refresh(session)
+
+    # Signal in-memory cancellation token
+    cancel_session(session_id)
+    logger.info(f"Research session {session_id} successfully marked CANCELLED.")
+
+    return session, "cancelled"
 
 
 async def get_research_session(
