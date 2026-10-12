@@ -186,6 +186,12 @@ async def execute_research_workflow(session_id: UUID) -> None:
             # 3. Dispatch tasks wave by wave
             all_findings, _ = await dispatch_research_session(session_id, db)
 
+            if not all_findings:
+                logger.error(f"All research tasks failed for session {session_id}.")
+                session.status = ResearchStatus.FAILED
+                await db.commit()
+                return
+
             # 4. Fetch plan and tasks for report compilation
             plan_stmt = select(ResearchPlan).where(ResearchPlan.session_id == session_id)
             plan_res = await db.execute(plan_stmt)
@@ -230,6 +236,7 @@ async def execute_research_workflow(session_id: UUID) -> None:
         except Exception as e:
             logger.error(f"Execution failed for session {session_id}: {e}", exc_info=True)
             try:
+                await db.rollback()
                 stmt = select(ResearchSession).where(ResearchSession.id == session_id)
                 res = await db.execute(stmt)
                 failed_session = res.scalar_one_or_none()

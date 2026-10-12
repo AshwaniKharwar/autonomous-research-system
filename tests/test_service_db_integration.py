@@ -202,7 +202,7 @@ async def test_execute_research_workflow_when_already_running():
 
     with patch("apps.research_agent.service.dispatch_research_session", new_callable=AsyncMock) as mock_dispatch, \
          patch("apps.research_agent.service.report_writer", new_callable=AsyncMock) as mock_writer:
-        mock_dispatch.return_value = ([], [])
+        mock_dispatch.return_value = ({"task-01": "Finding 1"}, ["Log 1"])
         mock_writer.return_value = "# Report"
 
         await execute_research_workflow(session_id)
@@ -211,6 +211,62 @@ async def test_execute_research_workflow_when_already_running():
     async with async_session_factory() as db:
         final_session = await get_research_session(session_id, db)
         assert final_session.status == ResearchStatus.COMPLETED
+        await db.delete(final_session)
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_execute_research_workflow_fails_when_all_findings_empty():
+    query = "Test failed tasks workflow"
+    async with async_session_factory() as db:
+        session = ResearchSession(
+            query=query,
+            status=ResearchStatus.RUNNING,
+        )
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+        session_id = session.id
+
+    with patch("apps.research_agent.service.dispatch_research_session", new_callable=AsyncMock) as mock_dispatch, \
+         patch("apps.research_agent.service.report_writer", new_callable=AsyncMock) as mock_writer:
+        mock_dispatch.return_value = ({}, ["All tasks failed"])
+        mock_writer.return_value = "# Report"
+
+        await execute_research_workflow(session_id)
+        assert mock_dispatch.called
+        assert not mock_writer.called
+
+    async with async_session_factory() as db:
+        final_session = await get_research_session(session_id, db)
+        assert final_session.status == ResearchStatus.FAILED
+        assert final_session.report is None
+        await db.delete(final_session)
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_execute_research_workflow_rollback_on_exception():
+    query = "Test rollback on exception workflow"
+    async with async_session_factory() as db:
+        session = ResearchSession(
+            query=query,
+            status=ResearchStatus.RUNNING,
+        )
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+        session_id = session.id
+
+    with patch("apps.research_agent.service.dispatch_research_session", new_callable=AsyncMock) as mock_dispatch:
+        mock_dispatch.side_effect = RuntimeError("Simulated failure during dispatch")
+
+        await execute_research_workflow(session_id)
+        assert mock_dispatch.called
+
+    async with async_session_factory() as db:
+        final_session = await get_research_session(session_id, db)
+        assert final_session.status == ResearchStatus.FAILED
         await db.delete(final_session)
         await db.commit()
 
