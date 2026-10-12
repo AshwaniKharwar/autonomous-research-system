@@ -1,9 +1,11 @@
 import asyncio
 import logging
-from apps.research_agent.planner import research_planner
-from apps.research_agent.task_architect import task_architect
-from apps.research_agent.dispatcher import dispatch_research
-from apps.research_agent.report_writer import report_writer
+from apps.db.database import async_session_factory
+from apps.research_agent.service import (
+    create_research_session,
+    execute_research_workflow,
+    get_research_session,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,30 +14,39 @@ logging.basicConfig(
 logger = logging.getLogger("research_agent.main")
 
 
-async def main(query: str):
-    logger.info("Starting end-to-end research workflow...")
+async def run_pipeline(query: str):
+    logger.info("Starting Research Agent Workflow...")
 
-    # Step 1: Create research plan
-    logger.info("Step 1: Generating research plan...")
-    plan_summary = await research_planner(query)
-    logger.info(f"Plan summary: {plan_summary}")
+    # Phase 1: Plan and subtasks creation
+    async with async_session_factory() as db:
+        session = await create_research_session(query, db)
+        session_id = session.id
+        logger.info(f"Session {session_id} created with status: {session.status}")
+        logger.info(f"Number of subtasks created: {len(session.tasks)}")
+        for t in session.tasks:
+            logger.info(f"  - [{t.task_key}] {t.title} (depends_on: {t.depends_on})")
 
-    # Step 2: Convert plan into concrete research tasks
-    logger.info("Step 2: Architecting research tasks...")
-    tasks_summary = await task_architect(query)
-    logger.info(f"Tasks summary: {tasks_summary}")
+    print("\n" + "=" * 60)
+    print(f"Research Session ID: {session_id}")
+    print(f"Status: PENDING_APPROVAL")
+    print(f"Awaiting approval to start task execution.")
+    print("=" * 60 + "\n")
 
-    # Step 3: Dispatch research tasks wave by wave
-    logger.info("Step 3: Dispatching research tasks...")
-    dispatch_summary = await dispatch_research()
-    logger.info(f"Dispatch summary: {dispatch_summary}")
+    # In API flow, this is triggered via POST /api/v1/research/{session_id}/start
+    # Here we simulate starting after approval:
+    logger.info(f"Starting execution for session {session_id}...")
+    await execute_research_workflow(session_id)
 
-    # Step 4: Compile findings into final report
-    logger.info("Step 4: Compiling final report...")
-    report = await report_writer()
-    print(report)
+    async with async_session_factory() as db:
+        completed = await get_research_session(session_id, db)
+        if completed and completed.report:
+            print("\n" + "=" * 60)
+            print(f"Research Session {session_id} COMPLETED.")
+            print(f"Report word count: {completed.report.word_count}")
+            print("=" * 60 + "\n")
+            print(completed.report.content[:1000] + "\n...")
 
 
 if __name__ == "__main__":
     query = "How do solid-state batteries differ from lithium-ion, and which companies are closest to mass production?"
-    asyncio.run(main(query))
+    asyncio.run(run_pipeline(query))

@@ -1,73 +1,146 @@
-import json
+import asyncio
 import logging
-import os
-from langchain.agents import create_agent
-from langchain_core.tools import tool
-from apps.research_agent.prompts import DispatcherAgentPrompt
-from apps.research_agent.tools import list_files, read_file, write_file, BASE_DIR
+from typing import Any
+from uuid import UUID
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from apps.db.models import DispatchLog, ResearchTask, TaskStatus
 from apps.research_agent.task_agent import run_task_agent
-from apps.research_agent.utils import extract_last_text, get_model
 
 logger = logging.getLogger("research_agent.dispatcher")
 
 
-def _load_task(task_ref: str) -> dict:
-    """Accept either a task JSON object or a task id like 'task-01'."""
-    task_ref = task_ref.strip()
-    if task_ref.startswith("{"):
-        return json.loads(task_ref)
+def compute_task_waves(tasks: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Sort tasks topologically into execution waves based on depends_on."""
+    task_map = {t["task_key"]: t for t in tasks}
+    completed_ids: set[str] = set()
+    remaining = list(tasks)
+    waves: list[list[dict[str, Any]]] = []
 
-    tasks_path = os.path.join(BASE_DIR, "tasks.json")
-    if not os.path.exists(tasks_path):
-        raise FileNotFoundError(f"tasks.json does not exist at {tasks_path}. Ensure task architect has executed.")
+    while remaining:
+        current_wave = []
+        for t in remaining:
+            deps = t.get("depends_on") or []
+            # Ready if all dependencies are in completed_ids
+            if all(dep in completed_ids for dep in deps):
+                current_wave.append(t)
 
-    with open(tasks_path, "r", encoding="utf-8") as f:
-        tasks = json.load(f)
-    for task in tasks:
-        if isinstance(task, dict) and task.get("id") == task_ref:
-            return task
-    raise ValueError(f"Unknown task: {task_ref}")
+        if not current_wave:
+            # Circular dependency or missing dependency detected, force execution of remainder
+            logger.warning("Circular or unresolvable dependencies detected; breaking cycle.")
+            current_wave = remaining[:]
 
+        waves.append(current_wave)
+        for t in current_wave:
+            completed_ids.add(t["task_key"])
+            remaining.remove(t)
 
-@tool
-async def dispatch_task(task_ref: str) -> str:
-    """Launch a Task Research Agent for ONE task.
-
-    Pass task_ref as the task's exact JSON object (preferred) or just its id,
-    for example 'task-01'. Returns the researcher's summary and output path.
-    """
-    try:
-        task = _load_task(task_ref)
-    except Exception as e:
-        logger.error(f"Could not resolve task {task_ref}: {e}")
-        return f"Error: could not resolve task ({e})"
-
-    logger.info(f"Dispatching task {task.get('id')}: {task.get('title')}")
-    try:
-        summary = await run_task_agent(task)
-    except Exception as e:
-        logger.error(f"Task {task.get('id')} failed: {e}")
-        return f"Error: task {task.get('id')} failed ({e})"
-    return f"{task.get('id')} -> {task.get('output_file')}\n{summary}"
+    return waves
 
 
-async def dispatch_research() -> str:
-    logger.info("Dispatching research tasks...")
-    model = get_model("dispatcher")
-    agent = create_agent(
-        model=model,
-        tools=[list_files, read_file, write_file, dispatch_task],
-        system_prompt=DispatcherAgentPrompt,
-    )
+async def dispatch_research_session(
+    session_id: UUID,
+    db: AsyncSession,
+) -> tuple[dict[str, str], list[str]]:
+    """Execute all tasks for a research session wave by wave, saving findings to Postgres."""
+    logger.info(f"Starting wave-by-wave dispatch for session {session_id}...")
 
-    result = await agent.ainvoke(
+    # Fetch tasks from database
+    stmt = select(ResearchTask).where(ResearchTask.session_id == session_id)
+    result = await db.execute(stmt)
+    db_tasks = list(result.scalars().all())
+
+    if not db_tasks:
+        logger.warning(f"No tasks found for session {session_id}")
+        return {}, ["No tasks found"]
+
+    task_dicts = [
         {
-            "messages": [
-                (
-                    "user",
-                    "Read /research/tasks.json and dispatch every task, wave by wave.",
-                )
-            ]
+            "id": str(t.id),
+            "task_key": t.task_key,
+            "title": t.title,
+            "angle": t.angle,
+            "type": t.task_type,
+            "context": t.context,
+            "questions": t.questions,
+            "scope": t.scope,
+            "preferred_sources": t.preferred_sources,
+            "search_budget": t.search_budget,
+            "min_sources": t.min_sources,
+            "depends_on": t.depends_on,
         }
-    )
-    return extract_last_text(result)
+        for t in db_tasks
+    ]
+
+    waves = compute_task_waves(task_dicts)
+    logger.info(f"Computed {len(waves)} waves for session {session_id}")
+
+    all_findings: dict[str, str] = {}
+    summary_logs: list[str] = []
+
+    for wave_idx, wave_tasks in enumerate(waves, 1):
+        logger.info(f"Executing Wave {wave_idx} with {len(wave_tasks)} tasks...")
+
+        async def _execute_single_task(task_data: dict[str, Any]):
+            task_key = task_data["task_key"]
+            deps = task_data.get("depends_on") or []
+            dep_findings = {d: all_findings[d] for d in deps if d in all_findings}
+
+            # Update task status to RUNNING
+            task_stmt = select(ResearchTask).where(
+                ResearchTask.session_id == session_id,
+                ResearchTask.task_key == task_key,
+            )
+            t_res = await db.execute(task_stmt)
+            task_row = t_res.scalar_one_or_none()
+            if task_row:
+                task_row.status = TaskStatus.RUNNING
+                task_row.wave = wave_idx
+                await db.commit()
+
+            try:
+                findings_text = await run_task_agent(task_data, dep_findings)
+                status_str = "COMPLETED"
+                note_str = "Completed successfully"
+                all_findings[task_key] = findings_text
+
+                # Update in DB
+                t_res = await db.execute(task_stmt)
+                task_row = t_res.scalar_one_or_none()
+                if task_row:
+                    task_row.status = TaskStatus.COMPLETED
+                    task_row.findings = findings_text
+                    await db.commit()
+
+            except Exception as e:
+                logger.error(f"Task {task_key} failed: {e}", exc_info=True)
+                status_str = "FAILED"
+                note_str = str(e)
+                t_res = await db.execute(task_stmt)
+                task_row = t_res.scalar_one_or_none()
+                if task_row:
+                    task_row.status = TaskStatus.FAILED
+                    await db.commit()
+
+            # Record dispatch log
+            log_entry = DispatchLog(
+                session_id=session_id,
+                task_key=task_key,
+                wave=wave_idx,
+                status=status_str,
+                note=note_str,
+            )
+            db.add(log_entry)
+            await db.commit()
+            return f"Wave {wave_idx} - {task_key}: {status_str}"
+
+        # Execute all tasks in this wave concurrently
+        wave_results = await asyncio.gather(*[_execute_single_task(t) for t in wave_tasks])
+        summary_logs.extend(wave_results)
+
+    logger.info(f"Session {session_id} wave dispatch complete.")
+    return all_findings, summary_logs
+
+
+# Backward-compatibility alias
+dispatch_research = dispatch_research_session
