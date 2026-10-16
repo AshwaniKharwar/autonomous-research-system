@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.db.database import async_session_factory as default_session_factory
 from apps.db.models import DispatchLog, ResearchTask, TaskStatus
 from apps.research_agent.cancellation import is_cancelled
-from apps.research_agent.task_agent import run_task_agent
+from apps.research_agent.task_agent import (
+    TaskAgentResult,
+    extract_sources_from_findings,
+    run_task_agent,
+)
+
 
 logger = logging.getLogger("research_agent.dispatcher")
 
@@ -257,12 +262,35 @@ async def dispatch_research_session(
                 max_retries = int(os.getenv("TASK_AGENT_MAX_RETRIES", "2"))
                 retry_sleep_base = float(os.getenv("TASK_AGENT_RETRY_SLEEP", "0.5"))
                 findings_text = None
+                sources: list[dict[str, Any]] = []
                 status_str = "FAILED"
                 note_str = ""
 
                 for attempt in range(max_retries + 1):
                     try:
-                        findings_text = await run_task_agent(task_data, dep_findings)
+                        agent_output = await run_task_agent(task_data, dep_findings)
+                        if isinstance(agent_output, TaskAgentResult):
+                            findings_text = agent_output.findings
+                            sources = agent_output.sources
+                        elif isinstance(agent_output, (tuple, list)) and len(agent_output) >= 2:
+                            findings_text = agent_output[0]
+                            sources = agent_output[1] if isinstance(agent_output[1], list) else []
+                        elif isinstance(agent_output, str):
+                            findings_text = agent_output
+                            sources = extract_sources_from_findings(findings_text)
+                        elif isinstance(agent_output, dict):
+                            findings_text = agent_output.get("findings", "")
+                            sources = agent_output.get("sources", [])
+                        elif hasattr(agent_output, "findings") and hasattr(agent_output, "sources"):
+                            findings_text = getattr(agent_output, "findings")
+                            sources = getattr(agent_output, "sources")
+                        else:
+                            findings_text = str(agent_output) if agent_output is not None else ""
+                            sources = extract_sources_from_findings(findings_text)
+
+                        if not sources and findings_text:
+                            sources = extract_sources_from_findings(findings_text)
+
                         status_str = "COMPLETED"
                         if has_partial_deps:
                             missing_str = ", ".join(missing_deps)
@@ -282,6 +310,7 @@ async def dispatch_research_session(
                         status_str = "FAILED"
                         note_str = str(e)
                         findings_text = None
+                        sources = []
                         break
 
                 # 3. Update task status and persist log in DB (short-lived session)
@@ -296,6 +325,7 @@ async def dispatch_research_session(
                         if status_str == "COMPLETED":
                             task_row.status = TaskStatus.COMPLETED
                             task_row.findings = findings_text
+                            task_row.sources = sources
                         else:
                             task_row.status = TaskStatus.FAILED
                         await task_db.commit()
