@@ -4,6 +4,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.schemas import (
+    BatchDeleteRequest,
+    BatchDeleteResponse,
     CancelResearchResponse,
     ResearchCreateRequest,
     ResearchReviseRequest,
@@ -17,6 +19,7 @@ from apps.research_agent.service import (
     cancel_research_session,
     create_research_session,
     delete_research_session,
+    delete_research_sessions_batch,
     execute_research_workflow,
     get_research_session,
     get_research_task,
@@ -133,6 +136,25 @@ async def delete_research(
             detail=f"Research session with ID {id} not found.",
         )
     return None
+
+
+@router.post(
+    "/batch-delete",
+    response_model=BatchDeleteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Batch Delete Research Sessions",
+)
+async def batch_delete_researches(
+    req: BatchDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch delete research sessions and signal cancellation for any running tasks."""
+    count, deleted_ids = await delete_research_sessions_batch(req.ids, db)
+    return BatchDeleteResponse(
+        deleted_count=count,
+        deleted_ids=deleted_ids,
+        message=f"Successfully deleted {count} research session(s).",
+    )
 
 
 @router.post(

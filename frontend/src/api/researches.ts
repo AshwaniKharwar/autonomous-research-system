@@ -1,5 +1,6 @@
 import { request } from './client';
 import type {
+  BatchDeleteResponse,
   CancelResearchResponse,
   ResearchCreateRequest,
   ResearchReviseRequest,
@@ -64,6 +65,13 @@ export async function cancelResearch(id: string): Promise<CancelResearchResponse
 export async function deleteResearch(id: string): Promise<void> {
   return request<void>(`${BASE_URL}/${id}`, {
     method: 'DELETE',
+  });
+}
+
+export async function batchDeleteResearches(ids: string[]): Promise<BatchDeleteResponse> {
+  return request<BatchDeleteResponse>(`${BASE_URL}/batch-delete`, {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
   });
 }
 

@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  batchDeleteResearches,
   cancelResearch,
   createResearch,
   deleteResearch,
@@ -72,11 +73,26 @@ export function useResearchMutations() {
     },
   });
 
+  const batchDeleteMutation = useMutation({
+    mutationFn: (ids: string[]) => batchDeleteResearches(ids),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: RESEARCHES_QUERY_KEY });
+      for (const id of res.deleted_ids) {
+        queryClient.removeQueries({ queryKey: [RESEARCH_SESSION_QUERY_KEY, id] });
+      }
+      const currentActiveId = useUIStore.getState().activeSessionId;
+      if (currentActiveId && res.deleted_ids.includes(currentActiveId)) {
+        setActiveSessionId(null);
+      }
+    },
+  });
+
   return {
     createMutation,
     reviseMutation,
     startMutation,
     cancelMutation,
     deleteMutation,
+    batchDeleteMutation,
   };
 }

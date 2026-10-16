@@ -444,3 +444,34 @@ async def test_cancel_failed_session_conflict():
             assert resp.status_code == 409
             assert "cannot be cancelled" in resp.json()["detail"]
 
+
+@pytest.mark.asyncio
+async def test_batch_delete_researches_success():
+    id1 = uuid4()
+    id2 = uuid4()
+
+    with patch("apps.api.router.delete_research_sessions_batch", new_callable=AsyncMock) as mock_batch_del:
+        mock_batch_del.return_value = (2, [id1, id2])
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/v1/researches/batch-delete",
+                json={"ids": [str(id1), str(id2)]},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["deleted_count"] == 2
+            assert data["deleted_ids"] == [str(id1), str(id2)]
+            assert "Successfully deleted 2" in data["message"]
+            mock_batch_del.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_empty_ids_validation_error():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/researches/batch-delete",
+            json={"ids": []},
+        )
+        assert resp.status_code == 422
+

@@ -1,15 +1,19 @@
 import { useState, useMemo } from 'react';
 import {
   Compass,
+  ListChecks,
   Moon,
   Plus,
   Search,
   Sun,
+  Trash2,
+  X,
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { SessionItem } from './SessionItem';
 import { DeleteConfirmDialog } from '../research/DeleteConfirmDialog';
+import { BatchDeleteConfirmDialog } from '../research/BatchDeleteConfirmDialog';
 import { useResearches } from '../../hooks/useResearches';
 import { useUIStore } from '../../store/useUIStore';
 import type { ResearchStatus } from '../../api/types';
@@ -33,6 +37,9 @@ export function Sidebar() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sessionToDelete, setSessionToDelete] = useState<{ id: string; query: string } | null>(null);
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false);
   const [isDark, setIsDark] = useState(true);
 
   const { data: sessions, isLoading, isError } = useResearches(statusFilter);
@@ -43,6 +50,54 @@ export function Sidebar() {
     const q = searchQuery.toLowerCase();
     return sessions.filter((s) => s.query.toLowerCase().includes(q));
   }, [sessions, searchQuery]);
+
+  const selectedSessionsList = useMemo(() => {
+    if (!sessions) return [];
+    return sessions.filter((s) => selectedIds.has(s.id));
+  }, [sessions, selectedIds]);
+
+  const isAllSelected =
+    filteredSessions.length > 0 &&
+    filteredSessions.every((s) => selectedIds.has(s.id));
+  const isSomeSelected =
+    filteredSessions.some((s) => selectedIds.has(s.id)) && !isAllSelected;
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const s of filteredSessions) {
+          next.delete(s.id);
+        }
+        return next;
+      });
+    } else {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const s of filteredSessions) {
+          next.add(s.id);
+        }
+        return next;
+      });
+    }
+  };
+
+  const toggleSelectItem = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const exitSelectMode = () => {
+    setIsSelectMode(false);
+    setSelectedIds(new Set());
+  };
 
   const toggleTheme = () => {
     const root = document.documentElement;
@@ -123,6 +178,51 @@ export function Sidebar() {
           </div>
         </div>
 
+        {/* Sessions List Header / Multi-Select Controls */}
+        <div className="flex items-center justify-between px-3 pt-2 pb-1 text-xs">
+          {isSelectMode ? (
+            <div className="flex items-center justify-between w-full">
+              <label className="flex items-center gap-2 cursor-pointer text-muted-foreground hover:text-foreground text-[11px]">
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = isSomeSelected;
+                  }}
+                  onChange={toggleSelectAll}
+                  className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/20 cursor-pointer accent-primary"
+                />
+                <span>{isAllSelected ? 'Deselect All' : 'Select All'}</span>
+              </label>
+              <button
+                type="button"
+                onClick={exitSelectMode}
+                className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+              >
+                <X className="h-3 w-3" />
+                Done
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between w-full text-muted-foreground">
+              <span className="text-[11px] font-medium uppercase tracking-wider">
+                Sessions {filteredSessions.length > 0 && `(${filteredSessions.length})`}
+              </span>
+              {filteredSessions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsSelectMode(true)}
+                  className="flex items-center gap-1 text-[11px] hover:text-foreground transition-colors p-1 rounded-md hover:bg-secondary/60"
+                  title="Select multiple sessions"
+                >
+                  <ListChecks className="h-3.5 w-3.5" />
+                  <span>Select</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Sessions List */}
         <div className="flex-1 overflow-y-auto px-3 py-1 space-y-1">
           {isLoading ? (
@@ -145,6 +245,9 @@ export function Sidebar() {
                 key={session.id}
                 session={session}
                 isActive={session.id === activeSessionId}
+                isSelectMode={isSelectMode}
+                isSelected={selectedIds.has(session.id)}
+                onToggleSelect={() => toggleSelectItem(session.id)}
                 onSelect={() => setActiveSessionId(session.id)}
                 onDeleteClick={(e) => {
                   e.stopPropagation();
@@ -154,6 +257,34 @@ export function Sidebar() {
             ))
           )}
         </div>
+
+        {/* Batch Delete Action Bar */}
+        {isSelectMode && (
+          <div className="p-3 border-t border-border/60 bg-card/80 backdrop-blur-sm space-y-2">
+            <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+              <span>
+                {selectedIds.size} of {filteredSessions.length} selected
+              </span>
+              <button
+                type="button"
+                onClick={exitSelectMode}
+                className="text-[11px] hover:text-foreground underline underline-offset-2"
+              >
+                Cancel
+              </button>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={selectedIds.size === 0}
+              onClick={() => setIsBatchDeleteDialogOpen(true)}
+              className="w-full gap-2 text-xs font-medium shadow-xs"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete Selected ({selectedIds.size})
+            </Button>
+          </div>
+        )}
       </aside>
 
       <DeleteConfirmDialog
@@ -164,6 +295,16 @@ export function Sidebar() {
           if (!open) setSessionToDelete(null);
         }}
       />
+
+      <BatchDeleteConfirmDialog
+        open={isBatchDeleteDialogOpen}
+        onOpenChange={setIsBatchDeleteDialogOpen}
+        selectedSessions={selectedSessionsList}
+        onSuccess={() => {
+          exitSelectMode();
+        }}
+      />
     </>
   );
 }
+

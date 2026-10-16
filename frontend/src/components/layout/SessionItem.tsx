@@ -9,6 +9,9 @@ interface SessionItemProps {
   isActive: boolean;
   onSelect: () => void;
   onDeleteClick: (e: React.MouseEvent) => void;
+  isSelectMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: () => void;
 }
 
 export function SessionItem({
@@ -16,31 +19,58 @@ export function SessionItem({
   isActive,
   onSelect,
   onDeleteClick,
+  isSelectMode = false,
+  isSelected = false,
+  onToggleSelect,
 }: SessionItemProps) {
+  const handleClick = (e: React.MouseEvent) => {
+    if (isSelectMode) {
+      e.stopPropagation();
+      onToggleSelect?.();
+    } else {
+      onSelect();
+    }
+  };
+
   return (
     <div
-      onClick={onSelect}
+      onClick={handleClick}
       className={cn(
         'group relative flex flex-col gap-1.5 rounded-xl p-3 text-left transition-all cursor-pointer border',
-        isActive
+        isSelected
+          ? 'bg-primary/10 border-primary/50 shadow-xs'
+          : isActive && !isSelectMode
           ? 'bg-secondary/80 border-border shadow-xs'
           : 'border-transparent hover:bg-secondary/40 hover:border-border/50'
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground font-mono">
-          {formatRelativeTime(session.created_at)}
-        </span>
+        <div className="flex items-center gap-2">
+          {isSelectMode && (
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => onToggleSelect?.()}
+              onClick={(e) => e.stopPropagation()}
+              className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/20 cursor-pointer accent-primary"
+            />
+          )}
+          <span className="text-[11px] text-muted-foreground font-mono">
+            {formatRelativeTime(session.created_at)}
+          </span>
+        </div>
         <div className="flex items-center gap-1.5">
           <StatusBadge status={session.status} showIcon={false} className="text-[10px] px-1.5 py-0" />
-          <button
-            type="button"
-            onClick={onDeleteClick}
-            className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
-            title="Delete session"
-          >
-            <Trash2 className="h-3 w-3" />
-          </button>
+          {!isSelectMode && (
+            <button
+              type="button"
+              onClick={onDeleteClick}
+              className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
+              title="Delete session"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          )}
         </div>
       </div>
 

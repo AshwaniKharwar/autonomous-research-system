@@ -101,3 +101,13 @@ class CancelResearchResponse(BaseModel):
     status: ResearchStatus
     message: str
 
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[UUID] = Field(..., min_length=1, description="List of research session IDs to delete")
+
+
+class BatchDeleteResponse(BaseModel):
+    deleted_count: int
+    deleted_ids: list[UUID]
+    message: str
+

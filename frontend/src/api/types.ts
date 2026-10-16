@@ -93,3 +93,13 @@ export interface CancelResearchResponse {
   status: ResearchStatus;
   message: string;
 }
+
+export interface BatchDeleteRequest {
+  ids: string[];
+}
+
+export interface BatchDeleteResponse {
+  deleted_count: number;
+  deleted_ids: string[];
+  message: string;
+}
