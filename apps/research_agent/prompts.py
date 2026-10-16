@@ -84,7 +84,7 @@ Instructions:
 
 Return ONLY a valid JSON array of task objects (enclosed in ```json ... ``` if formatted):
 [
-  {
+  {{
     "id": "task-01",
     "title": "...",
     "angle": "...",
@@ -97,7 +97,7 @@ Return ONLY a valid JSON array of task objects (enclosed in ```json ... ``` if f
     "min_sources": 6,
     "depends_on": [],
     "feeds_report_section": "..."
-  }
+  }}
 ]
 """
 
@@ -170,4 +170,77 @@ Output the complete report in markdown:
 ## Recommended Follow-up Research
 ## Consolidated Sources
 ([1] Title - URL - Date)
+"""
+
+
+SectionWriterAgentPrompt = """
+You are a Specialist Section Writer Agent. You draft a detailed, authoritative section of a comprehensive research report based exclusively on the research findings for this specific section.
+
+Research Query:
+{query}
+
+Section Title:
+{section_title}
+
+Tasks Feeding This Section:
+{tasks_summary}
+
+Research Findings for This Section:
+{section_findings}
+
+Instructions:
+1. Write a thorough, deep, publication-quality section narrative covering all aspects addressed in the findings.
+2. Group related points logically with clear Markdown subheadings (### Subheading). Do not include top-level # [Report Title] or ## Executive Summary; focus purely on the detailed technical narrative for this section.
+3. Integrate facts, metrics, and technical nuances directly from the findings. Resolve any contradictions among sources explicitly by weighing source credibility and evidence.
+4. Preserve and maintain all source attributions and citations (e.g. [S1], [S2] or inline tags/links) present in the findings so they can be aggregated in the final consolidated bibliography.
+5. If there are uncertainties, data gaps, or contested points within this section, explain them clearly.
+6. Target a thorough, comprehensive treatment (approx. 400 - 1,000 words for this section).
+
+Output only the section narrative in markdown format starting with:
+## {section_title}
+"""
+
+
+LeadEditorAgentPrompt = """
+You are the Lead Editor and Executive Synthesis Agent. You take specialized section narratives drafted by research domain specialists and compile them into a unified, publication-grade, decision-ready final research report.
+
+User Query:
+{query}
+
+Research Plan:
+{plan_content}
+
+Tasks Completed:
+{tasks_summary}
+
+Drafted Section Narratives:
+{drafted_sections}
+
+Instructions:
+1. Structure & Narrative Flow:
+   - Assemble the drafted body sections into a seamless, unified report following the plan's outline order.
+   - Craft smooth narrative transitions between sections so the report reads as a single cohesive investigation rather than disconnected memos.
+   - Eliminate redundant preamble, overlapping explanations, or conflicting statements across sections.
+2. Executive Framing:
+   - Write an authoritative, incisive Executive Summary synthesizing the most critical insights, strategic implications, and bottom-line verdict for the reader.
+   - Include a "Key Takeaways" section with 5-8 high-impact, decision-ready bullet points immediately following the Executive Summary.
+3. Synthesis & Analysis:
+   - Draw explicit cross-connections and synthesis between sections where insights from one domain impact another.
+   - Include an "Uncertainties and Contradictions" section summarizing the primary technical/commercial debates, conflicting data points, or unverified claims.
+   - Include a "Recommended Follow-up Research" section outlining high-value unanswered questions.
+4. Consolidated Master Citations:
+   - Unify, standardize, and deduplicate all citations and sources from the drafted sections into a single master numbered bibliography at the bottom under "## Consolidated Sources".
+   - Renumber all inline citations across the entire report to consistent bracketed numbers: [1], [2], [3], etc., matching the consolidated bibliography.
+   - Each entry in the master bibliography must be in the format: [N] Source Title / Author / Organization - URL or Publication Details - Date (if available).
+
+Required Report Markdown Structure:
+# [Authoritative Report Title]
+## Executive Summary
+## Key Takeaways
+(5-8 high-impact bullet points)
+[Assembled Body Sections with ## Headings, seamless transitions, and renumbered [1], [2] citations]
+## Uncertainties and Contradictions
+## Recommended Follow-up Research
+## Consolidated Sources
+([1] Author/Org. Title. URL. Date.)
 """

@@ -8,9 +8,35 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.db.database import async_session_factory as default_session_factory
 from apps.db.models import DispatchLog, ResearchTask, TaskStatus
 from apps.research_agent.cancellation import is_cancelled
-from apps.research_agent.task_agent import run_task_agent
+from apps.research_agent.task_agent import (
+    TaskAgentResult,
+    extract_sources_from_findings,
+    run_task_agent,
+)
+
 
 logger = logging.getLogger("research_agent.dispatcher")
+
+from apps.research_agent.utils import (
+    TRANSIENT_EXCEPTIONS,
+    TRANSIENT_KEYWORDS,
+    is_transient_error,
+)
+
+
+def is_synthesis_task(task_data: dict[str, Any]) -> bool:
+    """Check if a task is a synthesis or summary task."""
+    task_type = str(task_data.get("type") or task_data.get("task_type") or "").lower()
+    task_angle = str(task_data.get("angle") or "").lower()
+    task_title = str(task_data.get("title") or "").lower()
+    return (
+        task_type == "synthesis"
+        or "synthesis" in task_angle
+        or "synthesis" in task_title
+        or "summary" in task_title
+    )
+
+
 
 
 def compute_task_waves(tasks: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -81,6 +107,7 @@ async def dispatch_research_session(
             "title": t.title,
             "angle": t.angle,
             "type": t.task_type,
+            "task_type": t.task_type,
             "context": t.context,
             "questions": t.questions,
             "scope": t.scope,
@@ -127,38 +154,62 @@ async def dispatch_research_session(
 
                 # Check if any dependencies failed or are missing
                 missing_deps = [d for d in deps if d not in all_findings]
+                has_partial_deps = False
                 if missing_deps:
-                    logger.warning(
-                        f"Task {task_key} skipped because dependency '{missing_deps[0]}' is not completed."
-                    )
-                    status_str = "FAILED"
-                    note_str = f"Dependency '{missing_deps[0]}' failed or not completed"
+                    total_deps = len(deps)
+                    succeeded_deps_count = total_deps - len(missing_deps)
+                    is_synthesis = is_synthesis_task(task_data)
 
-                    async with factory() as task_db:
-                        task_stmt = select(ResearchTask).where(
-                            ResearchTask.session_id == session_id,
-                            ResearchTask.task_key == task_key,
+                    # Soft dependency logic: synthesis tasks can proceed if at least 50% of deps succeeded
+                    if is_synthesis and total_deps > 0 and (succeeded_deps_count * 2 >= total_deps):
+                        has_partial_deps = True
+                        logger.warning(
+                            f"Synthesis task {task_key} proceeding with partial dependencies "
+                            f"({succeeded_deps_count}/{total_deps} succeeded). Missing: {missing_deps}"
                         )
-                        t_res = await task_db.execute(task_stmt)
-                        task_row = t_res.scalar_one_or_none()
-                        if task_row:
-                            task_row.status = TaskStatus.FAILED
-                            task_row.wave = wave_idx
+                        # Prepend note to context detailing missing upstream dependency findings
+                        missing_str = ", ".join(missing_deps)
+                        missing_note = (
+                            f"[NOTE: Upstream dependency findings missing for: {missing_str}. "
+                            f"Proceeding with available partial findings.]"
+                        )
+                        existing_context = task_data.get("context") or ""
+                        task_data = {
+                            **task_data,
+                            "context": f"{missing_note}\n\n{existing_context}".strip(),
+                        }
+                    else:
+                        logger.warning(
+                            f"Task {task_key} skipped because dependency '{missing_deps[0]}' is not completed."
+                        )
+                        status_str = "FAILED"
+                        note_str = f"Dependency '{missing_deps[0]}' failed or not completed"
+
+                        async with factory() as task_db:
+                            task_stmt = select(ResearchTask).where(
+                                ResearchTask.session_id == session_id,
+                                ResearchTask.task_key == task_key,
+                            )
+                            t_res = await task_db.execute(task_stmt)
+                            task_row = t_res.scalar_one_or_none()
+                            if task_row:
+                                task_row.status = TaskStatus.FAILED
+                                task_row.wave = wave_idx
+                                await task_db.commit()
+
+                            log_entry = DispatchLog(
+                                session_id=session_id,
+                                task_key=task_key,
+                                wave=wave_idx,
+                                status=status_str,
+                                note=note_str,
+                            )
+                            task_db.add(log_entry)
                             await task_db.commit()
 
-                        log_entry = DispatchLog(
-                            session_id=session_id,
-                            task_key=task_key,
-                            wave=wave_idx,
-                            status=status_str,
-                            note=note_str,
-                        )
-                        task_db.add(log_entry)
-                        await task_db.commit()
+                        return f"Wave {wave_idx} - {task_key}: {status_str} ({note_str})"
 
-                    return f"Wave {wave_idx} - {task_key}: {status_str} ({note_str})"
-
-                dep_findings = {d: all_findings[d] for d in deps}
+                dep_findings = {d: all_findings[d] for d in deps if d in all_findings}
 
                 # 1. Update task status to RUNNING (short-lived session)
                 async with factory() as task_db:
@@ -173,17 +224,60 @@ async def dispatch_research_session(
                         task_row.wave = wave_idx
                         await task_db.commit()
 
-                # 2. Run task agent (no DB connection held during agent execution)
-                try:
-                    findings_text = await run_task_agent(task_data, dep_findings)
-                    status_str = "COMPLETED"
-                    note_str = "Completed successfully"
-                    all_findings[task_key] = findings_text
-                except Exception as e:
-                    logger.error(f"Task {task_key} failed: {e}", exc_info=True)
-                    status_str = "FAILED"
-                    note_str = str(e)
-                    findings_text = None
+                # 2. Run task agent with retry for transient failures
+                max_retries = int(os.getenv("TASK_AGENT_MAX_RETRIES", "2"))
+                retry_sleep_base = float(os.getenv("TASK_AGENT_RETRY_SLEEP", "0.5"))
+                findings_text = None
+                sources: list[dict[str, Any]] = []
+                status_str = "FAILED"
+                note_str = ""
+
+                for attempt in range(max_retries + 1):
+                    try:
+                        agent_output = await run_task_agent(task_data, dep_findings)
+                        if isinstance(agent_output, TaskAgentResult):
+                            findings_text = agent_output.findings
+                            sources = agent_output.sources
+                        elif isinstance(agent_output, (tuple, list)) and len(agent_output) >= 2:
+                            findings_text = agent_output[0]
+                            sources = agent_output[1] if isinstance(agent_output[1], list) else []
+                        elif isinstance(agent_output, str):
+                            findings_text = agent_output
+                            sources = extract_sources_from_findings(findings_text)
+                        elif isinstance(agent_output, dict):
+                            findings_text = agent_output.get("findings", "")
+                            sources = agent_output.get("sources", [])
+                        elif hasattr(agent_output, "findings") and hasattr(agent_output, "sources"):
+                            findings_text = getattr(agent_output, "findings")
+                            sources = getattr(agent_output, "sources")
+                        else:
+                            findings_text = str(agent_output) if agent_output is not None else ""
+                            sources = extract_sources_from_findings(findings_text)
+
+                        if not sources and findings_text:
+                            sources = extract_sources_from_findings(findings_text)
+
+                        status_str = "COMPLETED"
+                        if has_partial_deps:
+                            missing_str = ", ".join(missing_deps)
+                            note_str = f"Completed with partial dependencies: missing [{missing_str}]"
+                        else:
+                            note_str = "Completed successfully"
+                        all_findings[task_key] = findings_text
+                        break
+                    except Exception as e:
+                        if attempt < max_retries and is_transient_error(e):
+                            logger.warning(
+                                f"Task {task_key} attempt {attempt + 1} failed with transient error: {e}. Retrying..."
+                            )
+                            await asyncio.sleep(retry_sleep_base * (attempt + 1))
+                            continue
+                        logger.error(f"Task {task_key} failed: {e}", exc_info=True)
+                        status_str = "FAILED"
+                        note_str = str(e)
+                        findings_text = None
+                        sources = []
+                        break
 
                 # 3. Update task status and persist log in DB (short-lived session)
                 async with factory() as task_db:
@@ -197,6 +291,7 @@ async def dispatch_research_session(
                         if status_str == "COMPLETED":
                             task_row.status = TaskStatus.COMPLETED
                             task_row.findings = findings_text
+                            task_row.sources = sources
                         else:
                             task_row.status = TaskStatus.FAILED
                         await task_db.commit()

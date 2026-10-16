@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from apps.db.models import ResearchStatus, TaskStatus
 
 
@@ -41,9 +41,19 @@ class ResearchTaskResponse(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     status: TaskStatus = TaskStatus.PENDING
     findings: str | None = None
+    sources: list[dict[str, Any]] = Field(default_factory=list)
     wave: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @field_validator("sources", mode="before")
+    @classmethod
+    def coerce_none_sources(cls, v: Any) -> list[dict[str, Any]]:
+        if v is None:
+            return []
+        return v
+
+
 
 
 class ResearchReportResponse(BaseModel):
