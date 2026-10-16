@@ -78,7 +78,7 @@ async def create_research_session(
         db.add(task_row)
 
     await db.commit()
-    await db.refresh(session, attribute_names=["plan", "tasks"])
+    await db.refresh(session, attribute_names=["plan", "tasks", "report", "dispatch_logs"])
     logger.info(f"Session {session_id} created with {len(tasks_data)} tasks. Awaiting user approval.")
     return session
 
@@ -158,7 +158,7 @@ async def revise_research_session(
         db.add(task_row)
 
     await db.commit()
-    await db.refresh(session, attribute_names=["plan", "tasks"])
+    await db.refresh(session, attribute_names=["plan", "tasks", "report", "dispatch_logs"])
     logger.info(f"Session {session.id} plan revised and tasks updated successfully.")
     return session
 
