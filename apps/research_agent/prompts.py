@@ -84,7 +84,7 @@ Instructions:
 
 Return ONLY a valid JSON array of task objects (enclosed in ```json ... ``` if formatted):
 [
-  {
+  {{
     "id": "task-01",
     "title": "...",
     "angle": "...",
@@ -97,7 +97,7 @@ Return ONLY a valid JSON array of task objects (enclosed in ```json ... ``` if f
     "min_sources": 6,
     "depends_on": [],
     "feeds_report_section": "..."
-  }
+  }}
 ]
 """
 
