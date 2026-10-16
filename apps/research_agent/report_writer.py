@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import Any
 from langchain.agents import create_agent
 from apps.research_agent.prompts import (
@@ -8,9 +9,10 @@ from apps.research_agent.prompts import (
     ReportWriterAgentPrompt,
     SectionWriterAgentPrompt,
 )
-from apps.research_agent.utils import extract_last_text, get_model
+from apps.research_agent.utils import extract_last_text, get_model, is_transient_error
 
 logger = logging.getLogger("research_agent.report_writer")
+
 
 
 def _group_tasks_by_section(
@@ -129,58 +131,71 @@ async def _draft_section(
 ) -> tuple[str, str]:
     """Draft narrative for a single report section based on its tasks and findings."""
     logger.info(f"Stage 1: Drafting section narrative for '{section_name}' with {len(section_findings)} task findings...")
-    try:
-        tasks_summary = json.dumps(
-            [
-                {
-                    "task_key": t.get("task_key") or t.get("id"),
-                    "title": t.get("title"),
-                    "questions": t.get("questions", []),
-                    "scope": t.get("scope", ""),
-                }
-                for t in section_tasks
-            ],
-            indent=2,
-        )
+    tasks_summary = json.dumps(
+        [
+            {
+                "task_key": t.get("task_key") or t.get("id"),
+                "title": t.get("title"),
+                "questions": t.get("questions", []),
+                "scope": t.get("scope", ""),
+            }
+            for t in section_tasks
+        ],
+        indent=2,
+    )
 
-        formatted_findings = "\n\n---\n\n".join(
-            [
-                f"### Task Findings: {task_id} ({task_title})\n{content}"
-                for task_id, task_title, content in section_findings
-            ]
-        )
+    formatted_findings = "\n\n---\n\n".join(
+        [
+            f"### Task Findings: {task_id} ({task_title})\n{content}"
+            for task_id, task_title, content in section_findings
+        ]
+    )
 
-        prompt = SectionWriterAgentPrompt.format(
-            query=query,
-            section_title=section_name,
-            tasks_summary=tasks_summary,
-            section_findings=formatted_findings,
-        )
+    prompt = SectionWriterAgentPrompt.format(
+        query=query,
+        section_title=section_name,
+        tasks_summary=tasks_summary,
+        section_findings=formatted_findings,
+    )
 
-        agent = create_agent(
-            model=model,
-            tools=[],
-            system_prompt=prompt,
-        )
+    max_retries = int(os.getenv("REPORT_SECTION_MAX_RETRIES", "2"))
+    retry_sleep_base = float(os.getenv("REPORT_SECTION_RETRY_SLEEP", "0.5"))
 
-        result = await agent.ainvoke({
-            "messages": [
-                ("user", f"Draft the comprehensive section narrative for '{section_name}' based on the provided findings.")
-            ]
-        })
-
-        narrative = extract_last_text(result)
-        return section_name, narrative
-    except Exception as e:
-        logger.error(f"Failed to draft section '{section_name}': {e}", exc_info=True)
-        # Graceful fallback: assemble raw findings for this section
-        fallback_narrative = (
-            f"## {section_name}\n\n"
-            + "\n\n".join(
-                [f"### Findings for {task_id} ({task_title}):\n{content}" for task_id, task_title, content in section_findings]
+    for attempt in range(max_retries + 1):
+        try:
+            agent = create_agent(
+                model=model,
+                tools=[],
+                system_prompt=prompt,
             )
+
+            result = await agent.ainvoke({
+                "messages": [
+                    ("user", f"Draft the comprehensive section narrative for '{section_name}' based on the provided findings.")
+                ]
+            })
+
+            narrative = extract_last_text(result)
+            return section_name, narrative
+        except Exception as e:
+            if attempt < max_retries and is_transient_error(e):
+                logger.warning(
+                    f"Drafting section '{section_name}' attempt {attempt + 1} failed with transient error: {e}. Retrying..."
+                )
+                await asyncio.sleep(retry_sleep_base * (attempt + 1))
+                continue
+            logger.error(f"Failed to draft section '{section_name}': {e}", exc_info=True)
+            break
+
+    # Graceful fallback: assemble raw findings for this section
+    fallback_narrative = (
+        f"## {section_name}\n\n"
+        + "\n\n".join(
+            [f"### Findings for {task_id} ({task_title}):\n{content}" for task_id, task_title, content in section_findings]
         )
-        return section_name, fallback_narrative
+    )
+    return section_name, fallback_narrative
+
 
 
 async def _lead_editor_synthesis(
@@ -260,16 +275,26 @@ async def report_writer(
     # Order sections according to the outline in plan_content
     ordered_section_names = _order_sections(list(sections_with_findings.keys()), plan_content)
 
-    # Stage 1: Section drafting in parallel via asyncio.gather
-    logger.info(f"Stage 1: Concurrently drafting {len(ordered_section_names)} section narratives...")
+    # Stage 1: Section drafting in parallel with concurrency semaphore
+    concurrency_limit = max(1, int(os.getenv("MAX_CONCURRENT_REPORT_SECTIONS", "3")))
+    semaphore = asyncio.Semaphore(concurrency_limit)
+    logger.info(
+        f"Stage 1: Concurrently drafting {len(ordered_section_names)} section narratives "
+        f"(max concurrency: {concurrency_limit})..."
+    )
+
+    async def _draft_section_with_semaphore(sec_name: str) -> tuple[str, str]:
+        async with semaphore:
+            return await _draft_section(
+                section_name=sec_name,
+                query=query,
+                section_tasks=sections_with_findings[sec_name]["tasks"],
+                section_findings=sections_with_findings[sec_name]["findings"],
+                model=model,
+            )
+
     draft_tasks = [
-        _draft_section(
-            section_name=sec_name,
-            query=query,
-            section_tasks=sections_with_findings[sec_name]["tasks"],
-            section_findings=sections_with_findings[sec_name]["findings"],
-            model=model,
-        )
+        _draft_section_with_semaphore(sec_name)
         for sec_name in ordered_section_names
     ]
     drafted_results = await asyncio.gather(*draft_tasks)
@@ -282,13 +307,38 @@ async def report_writer(
 
     # Stage 2: Lead Editor / Executive Synthesis pass
     logger.info("Stage 2: Running Lead Editor executive synthesis pass...")
-    final_report = await _lead_editor_synthesis(
-        query=query,
-        plan_content=plan_content,
-        tasks=tasks,
-        drafted_sections=assembled_drafts,
-        model=model,
-    )
+    try:
+        final_report = await _lead_editor_synthesis(
+            query=query,
+            plan_content=plan_content,
+            tasks=tasks,
+            drafted_sections=assembled_drafts,
+            model=model,
+        )
+    except Exception as e:
+        logger.error(
+            f"Stage 2 lead editor synthesis failed: {e}. Falling back to single-pass compilation.",
+            exc_info=True,
+        )
+        try:
+            final_report = await _single_pass_synthesis(
+                query=query,
+                plan_content=plan_content,
+                tasks=tasks,
+                findings=findings,
+                model=model,
+            )
+        except Exception as single_pass_err:
+            logger.error(
+                f"Single-pass fallback synthesis failed: {single_pass_err}. Assembling drafted sections directly.",
+                exc_info=True,
+            )
+            final_report = (
+                f"# Research Report: {query}\n\n"
+                f"## Executive Summary\n"
+                f"Report synthesized from {len(tasks)} tasks across {len(ordered_section_names)} sections.\n\n"
+                f"{assembled_drafts}"
+            )
 
     logger.info("Hierarchical report compilation completed successfully.")
     return final_report

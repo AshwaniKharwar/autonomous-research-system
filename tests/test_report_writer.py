@@ -349,3 +349,184 @@ async def test_section_draft_error_resilience():
     assert "Success narrative" in drafted_sections
     # Sec 2 had fallback narrative with raw findings
     assert "Findings 2" in drafted_sections
+
+
+@pytest.mark.asyncio
+async def test_bounded_concurrency_in_stage1_section_drafting(monkeypatch):
+    """Verify that Stage 1 section drafting respects MAX_CONCURRENT_REPORT_SECTIONS concurrency limit."""
+    monkeypatch.setenv("MAX_CONCURRENT_REPORT_SECTIONS", "2")
+
+    query = "Concurrency test"
+    plan_content = "# Plan"
+    tasks = [
+        {"task_key": f"t{i}", "title": f"Task {i}", "feeds_report_section": f"Section {i}"}
+        for i in range(5)
+    ]
+    findings = {f"t{i}": f"Finding {i}" for i in range(5)}
+
+    current_concurrency = 0
+    max_observed_concurrency = 0
+
+    async def mock_draft(section_name, query, section_tasks, section_findings, model):
+        nonlocal current_concurrency, max_observed_concurrency
+        current_concurrency += 1
+        if current_concurrency > max_observed_concurrency:
+            max_observed_concurrency = current_concurrency
+        await asyncio.sleep(0.02)
+        current_concurrency -= 1
+        return section_name, f"## {section_name}\nDrafted"
+
+    with patch("apps.research_agent.report_writer.get_model"), \
+         patch("apps.research_agent.report_writer._draft_section", side_effect=mock_draft), \
+         patch("apps.research_agent.report_writer._lead_editor_synthesis", return_value="# Final Report"):
+
+        report = await report_writer(query, plan_content, tasks, findings)
+
+    assert report == "# Final Report"
+    assert max_observed_concurrency <= 2
+    assert max_observed_concurrency > 1
+
+
+@pytest.mark.asyncio
+async def test_section_draft_retry_on_transient_error_success(monkeypatch):
+    """Verify _draft_section retries transient errors (e.g., 429) and returns synthesized narrative on recovery."""
+    monkeypatch.setenv("REPORT_SECTION_MAX_RETRIES", "2")
+    monkeypatch.setenv("REPORT_SECTION_RETRY_SLEEP", "0.001")
+
+    attempts = 0
+    mock_agent_fail = MagicMock()
+    mock_agent_fail.ainvoke = AsyncMock(side_effect=Exception("429 ResourceExhausted: Rate limit reached"))
+
+    mock_agent_success = MagicMock()
+    mock_agent_success.ainvoke = AsyncMock(return_value={"messages": [MagicMock(content="## Architecture\nSynthesized Content")]})
+
+    def mock_create_agent(model, tools, system_prompt):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return mock_agent_fail
+        return mock_agent_success
+
+    with patch("apps.research_agent.report_writer.create_agent", side_effect=mock_create_agent):
+        sec_name, narrative = await _draft_section(
+            section_name="Architecture",
+            query="test",
+            section_tasks=[{"task_key": "t1", "title": "T1"}],
+            section_findings=[("t1", "T1", "Raw findings content")],
+            model=MagicMock(),
+        )
+
+    assert attempts == 2
+    assert "Synthesized Content" in narrative
+
+
+@pytest.mark.asyncio
+async def test_section_draft_non_transient_error_no_retry(monkeypatch):
+    """Verify _draft_section does NOT retry non-transient errors and falls back immediately."""
+    monkeypatch.setenv("REPORT_SECTION_MAX_RETRIES", "2")
+    monkeypatch.setenv("REPORT_SECTION_RETRY_SLEEP", "0.001")
+
+    attempts = 0
+    mock_agent_fail = MagicMock()
+    mock_agent_fail.ainvoke = AsyncMock(side_effect=ValueError("Invalid argument format"))
+
+    def mock_create_agent(model, tools, system_prompt):
+        nonlocal attempts
+        attempts += 1
+        return mock_agent_fail
+
+    with patch("apps.research_agent.report_writer.create_agent", side_effect=mock_create_agent):
+        sec_name, narrative = await _draft_section(
+            section_name="Architecture",
+            query="test",
+            section_tasks=[{"task_key": "t1", "title": "T1"}],
+            section_findings=[("t1", "T1", "Raw findings content")],
+            model=MagicMock(),
+        )
+
+    assert attempts == 1
+    assert "Raw findings content" in narrative
+
+
+@pytest.mark.asyncio
+async def test_section_draft_transient_exhaustion_fallback(monkeypatch):
+    """Verify _draft_section falls back to raw findings when retries are exhausted."""
+    monkeypatch.setenv("REPORT_SECTION_MAX_RETRIES", "2")
+    monkeypatch.setenv("REPORT_SECTION_RETRY_SLEEP", "0.001")
+
+    attempts = 0
+    mock_agent_fail = MagicMock()
+    mock_agent_fail.ainvoke = AsyncMock(side_effect=TimeoutError("Request timed out"))
+
+    def mock_create_agent(model, tools, system_prompt):
+        nonlocal attempts
+        attempts += 1
+        return mock_agent_fail
+
+    with patch("apps.research_agent.report_writer.create_agent", side_effect=mock_create_agent):
+        sec_name, narrative = await _draft_section(
+            section_name="Architecture",
+            query="test",
+            section_tasks=[{"task_key": "t1", "title": "T1"}],
+            section_findings=[("t1", "T1", "Raw findings content")],
+            model=MagicMock(),
+        )
+
+    assert attempts == 3
+    assert "Raw findings content" in narrative
+
+
+@pytest.mark.asyncio
+async def test_stage2_fallback_to_single_pass_synthesis():
+    """Verify that if Stage 2 lead editor synthesis fails, it gracefully falls back to _single_pass_synthesis."""
+    query = "Stage 2 Failure Query"
+    plan_content = "# Plan"
+    tasks = [
+        {"task_key": "t1", "title": "T1", "feeds_report_section": "Sec 1"},
+        {"task_key": "t2", "title": "T2", "feeds_report_section": "Sec 2"},
+    ]
+    findings = {"t1": "Findings 1", "t2": "Findings 2"}
+
+    mock_draft = AsyncMock(side_effect=lambda section_name, **kwargs: (section_name, f"## {section_name}\nDraft"))
+    mock_lead_editor = AsyncMock(side_effect=RuntimeError("Context window limit exceeded"))
+    mock_single_pass = AsyncMock(return_value="# Single-Pass Fallback Report")
+
+    with patch("apps.research_agent.report_writer.get_model"), \
+         patch("apps.research_agent.report_writer._draft_section", mock_draft), \
+         patch("apps.research_agent.report_writer._lead_editor_synthesis", mock_lead_editor), \
+         patch("apps.research_agent.report_writer._single_pass_synthesis", mock_single_pass):
+
+        report = await report_writer(query, plan_content, tasks, findings)
+
+    assert report == "# Single-Pass Fallback Report"
+    assert mock_lead_editor.call_count == 1
+    assert mock_single_pass.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stage2_multi_tier_fallback_to_assembled_drafts():
+    """Verify that if BOTH Stage 2 lead editor and single-pass fallback fail, it falls back to direct assembly."""
+    query = "Total Failure Query"
+    plan_content = "# Plan"
+    tasks = [
+        {"task_key": "t1", "title": "T1", "feeds_report_section": "Sec 1"},
+        {"task_key": "t2", "title": "T2", "feeds_report_section": "Sec 2"},
+    ]
+    findings = {"t1": "Findings 1", "t2": "Findings 2"}
+
+    mock_draft = AsyncMock(side_effect=lambda section_name, **kwargs: (section_name, f"## {section_name}\nDraft narrative"))
+    mock_lead_editor = AsyncMock(side_effect=RuntimeError("Lead editor failure"))
+    mock_single_pass = AsyncMock(side_effect=RuntimeError("Single pass failure"))
+
+    with patch("apps.research_agent.report_writer.get_model"), \
+         patch("apps.research_agent.report_writer._draft_section", mock_draft), \
+         patch("apps.research_agent.report_writer._lead_editor_synthesis", mock_lead_editor), \
+         patch("apps.research_agent.report_writer._single_pass_synthesis", mock_single_pass):
+
+        report = await report_writer(query, plan_content, tasks, findings)
+
+    assert "# Research Report: Total Failure Query" in report
+    assert "## Executive Summary" in report
+    assert "## Sec 1\nDraft narrative" in report
+    assert "## Sec 2\nDraft narrative" in report
+

@@ -17,34 +17,10 @@ from apps.research_agent.task_agent import (
 
 logger = logging.getLogger("research_agent.dispatcher")
 
-TRANSIENT_EXCEPTIONS = (
-    TimeoutError,
-    asyncio.TimeoutError,
-    ConnectionError,
-    ConnectionResetError,
-    ConnectionRefusedError,
-)
-
-TRANSIENT_KEYWORDS = (
-    "rate limit",
-    "rate_limit",
-    "ratelimit",
-    "429",
-    "503",
-    "502",
-    "504",
-    "timeout",
-    "timed out",
-    "connection reset",
-    "connection refused",
-    "connection error",
-    "network error",
-    "resource_exhausted",
-    "resource exhausted",
-    "temporarily unavailable",
-    "service unavailable",
-    "overloaded",
-    "transient",
+from apps.research_agent.utils import (
+    TRANSIENT_EXCEPTIONS,
+    TRANSIENT_KEYWORDS,
+    is_transient_error,
 )
 
 
@@ -61,16 +37,6 @@ def is_synthesis_task(task_data: dict[str, Any]) -> bool:
     )
 
 
-def is_transient_error(exc: Exception) -> bool:
-    """Determine whether an exception is a transient error eligible for retry."""
-    if isinstance(exc, TRANSIENT_EXCEPTIONS):
-        return True
-    status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-    if status_code in (429, 502, 503, 504):
-        return True
-    exc_str = str(exc).lower()
-    exc_name = type(exc).__name__.lower()
-    return any(kw in exc_str or kw in exc_name for kw in TRANSIENT_KEYWORDS)
 
 
 def compute_task_waves(tasks: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
