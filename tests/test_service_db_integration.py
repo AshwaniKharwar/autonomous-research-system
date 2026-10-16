@@ -338,3 +338,39 @@ async def test_service_db_transaction_not_held_during_llm_calls():
         await db.commit()
 
 
+@pytest.mark.asyncio
+async def test_create_and_revise_session_serialization_compatibility():
+    """Verify that sessions returned by create and revise serialize to ResearchSessionResponse without MissingGreenlet."""
+    from apps.api.schemas import ResearchSessionResponse
+
+    query = "Serialization verification test topic"
+    plan_text = "# Test Plan Serialization"
+    tasks_data = [
+        {
+            "task_key": "task-01",
+            "title": "Task 1",
+            "depends_on": [],
+        }
+    ]
+
+    with patch("apps.research_agent.service.research_planner", AsyncMock(return_value=plan_text)), \
+         patch("apps.research_agent.service.task_architect", AsyncMock(return_value=tasks_data)), \
+         patch("apps.research_agent.service.revise_research_plan", AsyncMock(return_value="# Revised Plan")):
+
+        async with async_session_factory() as db:
+            session = await create_research_session(query, db)
+            # This should serialize smoothly without MissingGreenlet error on report or dispatch_logs
+            dto = ResearchSessionResponse.model_validate(session)
+            assert dto.id == session.id
+            assert dto.report is None
+            assert dto.dispatch_logs == []
+
+            revised = await revise_research_session(session.id, "Expand scope", db)
+            dto_revised = ResearchSessionResponse.model_validate(revised)
+            assert dto_revised.id == session.id
+            assert dto_revised.plan.content == "# Revised Plan"
+
+            await db.delete(revised)
+            await db.commit()
+
+

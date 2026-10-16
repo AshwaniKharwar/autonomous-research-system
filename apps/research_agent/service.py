@@ -78,7 +78,7 @@ async def create_research_session(
         db.add(task_row)
 
     await db.commit()
-    await db.refresh(session, attribute_names=["plan", "tasks"])
+    await db.refresh(session, attribute_names=["plan", "tasks", "report", "dispatch_logs"])
     logger.info(f"Session {session_id} created with {len(tasks_data)} tasks. Awaiting user approval.")
     return session
 
@@ -158,7 +158,7 @@ async def revise_research_session(
         db.add(task_row)
 
     await db.commit()
-    await db.refresh(session, attribute_names=["plan", "tasks"])
+    await db.refresh(session, attribute_names=["plan", "tasks", "report", "dispatch_logs"])
     logger.info(f"Session {session.id} plan revised and tasks updated successfully.")
     return session
 
@@ -341,12 +341,38 @@ async def delete_research_session(
     db: AsyncSession,
 ) -> bool:
     """Delete a research session and all associated cascade records."""
+    cancel_session(session_id)
     session = await get_research_session(session_id, db)
     if not session:
         return False
     await db.delete(session)
     await db.commit()
     return True
+
+
+async def delete_research_sessions_batch(
+    session_ids: list[UUID],
+    db: AsyncSession,
+) -> tuple[int, list[UUID]]:
+    """Batch delete research sessions and signal cancellation for any running tasks."""
+    if not session_ids:
+        return 0, []
+
+    for sid in session_ids:
+        cancel_session(sid)
+
+    stmt = select(ResearchSession.id).where(ResearchSession.id.in_(session_ids))
+    result = await db.execute(stmt)
+    matching_ids = [row[0] for row in result.all()]
+
+    if not matching_ids:
+        return 0, []
+
+    del_stmt = delete(ResearchSession).where(ResearchSession.id.in_(matching_ids))
+    del_result = await db.execute(del_stmt)
+    await db.commit()
+
+    return del_result.rowcount, matching_ids
 
 
 async def get_research_tasks(
